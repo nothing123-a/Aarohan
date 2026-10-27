@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   Palette,
   Users,
+  Clock,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
@@ -39,41 +40,40 @@ export function Sidebar() {
       case "depositor":
         return [
           { label: "Dashboard",                   path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
-          { label: "Institution FDRs",            path: "/fdr",              icon: <FileText size={17} /> },
+          { label: "My Pledged FDRs",             path: "/fdr",              icon: <FileText size={17} /> },
           { label: "Submit New FDR",              path: "/fdr/new",          icon: <FilePlus2 size={17} /> },
-          { label: "Renewals & Replacements",     path: "/renewals",         icon: <RefreshCw size={17} /> },
-          { label: "Release / Refund Requests",   path: "/release-requests", icon: <FileCheck size={17} /> },
-          { label: "Notifications & Alerts",      path: "/alerts",           icon: <BellRing size={17} /> },
+          { label: "Renewals & Extensions",       path: "/renewals",         icon: <RefreshCw size={17} /> },
+          { label: "Release & Refund Claims",     path: "/release-requests", icon: <FileCheck size={17} /> },
+          { label: "Observations & Alerts",       path: "/notifications",    icon: <BellRing size={17} /> },
         ];
       case "scrutiny_officer":
       case "officer":
       case "verifier":
         return [
-          { label: "Dashboard",                   path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
-          { label: "Verification Queue",          path: "/verification",     icon: <FileCheck2 size={17} /> },
-          { label: "Authorized FDR Records",      path: "/fdr",              icon: <FileText size={17} /> },
-          { label: "Maturity Monitoring",         path: "/alerts",           icon: <BellRing size={17} /> },
-          { label: "Renewal Tracking",            path: "/renewals",         icon: <RefreshCw size={17} /> },
-          { label: "Release Requests",            path: "/release-requests", icon: <FileCheck size={17} /> },
+          { label: "Scrutiny Dashboard",          path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
+          { label: "OCR Verification Queue",      path: "/verification",     icon: <FileCheck2 size={17} /> },
+          { label: "Master Deposit Register",     path: "/fdr",              icon: <FileText size={17} /> },
+          { label: "Maturity Timeline",           path: "/monitoring",       icon: <Clock size={17} /> },
           { label: "Scrutiny Reports",            path: "/reports",          icon: <TrendingUp size={17} /> },
+          { label: "Operational Alerts",          path: "/notifications",    icon: <BellRing size={17} /> },
         ];
       case "approving_authority":
         return [
-          { label: "Dashboard",                   path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
-          { label: "Pending Approvals",           path: "/release-requests", icon: <FileCheck2 size={17} /> },
-          { label: "Authorized FDR Records",      path: "/fdr",              icon: <FileText size={17} /> },
+          { label: "Executive Dashboard",         path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
           { label: "Release & Refund Sanctions",  path: "/release-requests", icon: <FileCheck size={17} /> },
-          { label: "Maturity Monitoring",         path: "/alerts",           icon: <BellRing size={17} /> },
+          { label: "Master Deposit Register",     path: "/fdr",              icon: <FileText size={17} /> },
+          { label: "Maturity Horizon Calendar",   path: "/monitoring",       icon: <Clock size={17} /> },
           { label: "Executive Reports",           path: "/reports",          icon: <TrendingUp size={17} /> },
+          { label: "Audit Ledger",                path: "/audit-logs",       icon: <Terminal size={17} /> },
         ];
       case "admin":
       default:
         return [
-          { label: "Dashboard",                   path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
-          { label: "User Management",             path: "/admin/users",      icon: <Users size={17} /> },
-          { label: "Institution Management",      path: "/institutions",     icon: <Building2 size={17} /> },
-          { label: "Audit Logs",                  path: "/audit-logs",       icon: <Terminal size={17} /> },
-          { label: "Workflow Settings",           path: "/settings",         icon: <Settings size={17} /> },
+          { label: "System Dashboard",            path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
+          { label: "User Administration",         path: "/admin/users",      icon: <Users size={17} /> },
+          { label: "Institution Directory",       path: "/institutions",     icon: <Building2 size={17} /> },
+          { label: "System Audit Ledger",         path: "/audit-logs",       icon: <Terminal size={17} /> },
+          { label: "Regulatory Policy Settings",  path: "/settings",         icon: <Settings size={17} /> },
           { label: "Design System Showcase",      path: "/design-system",    icon: <Palette size={17} /> },
         ];
     }

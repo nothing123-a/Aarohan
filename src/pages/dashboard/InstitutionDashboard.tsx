@@ -108,7 +108,7 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
           { label: "Respond to Query", onClick: () => observations[0] && setActiveObservation(observations[0]), icon: <AlertCircle size={16} />, badge: observations.length },
           { label: "Submit Replacement", path: "/renewals", icon: <RefreshCw size={16} /> },
           { label: "Release / Refund Request", path: "/release-requests", icon: <FileCheck size={16} /> },
-          { label: "Notifications & Alerts", path: "/alerts", icon: <Bell size={16} /> },
+          { label: "Notifications & Alerts", path: "/notifications", icon: <Bell size={16} />, highlight: false },
         ].map((act, i) => (
           act.path ? (
             <Link

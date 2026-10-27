@@ -24,6 +24,8 @@ Thumbs.db
 
 # Uploads
 backend/uploads/
+backend/storage/
+storage/
 
 # TypeScript cache
 *.tsbuildinfo
