@@ -12,7 +12,7 @@ export interface ApiClientError {
  * Points to /api which is proxied to the FastAPI backend (http://127.0.0.1:8000).
  */
 const apiClient = axios.create({
-  baseURL: "/api",
+  baseURL: (import.meta.env.VITE_API_URL as string) || "/api",
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",
