@@ -1845,13 +1845,27 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
               <Button
                 size="xs"
                 variant="primary"
-                className="bg-purple-700 hover:bg-purple-800 text-white font-bold"
+                className={`${
+                  statementReviewDecision === "QUERY_RAISED"
+                    ? "bg-amber-600 hover:bg-amber-700"
+                    : statementReviewDecision === "REJECTED"
+                    ? "bg-rose-600 hover:bg-rose-700"
+                    : "bg-purple-700 hover:bg-purple-800"
+                } text-white font-bold cursor-pointer`}
                 disabled={isSubmittingStatementReview || statementLoading}
                 onClick={handleExecuteStatementReview}
               >
                 {isSubmittingStatementReview ? (
                   <>
                     <RefreshCw size={12} className="animate-spin mr-1" /> Recording Sanction...
+                  </>
+                ) : statementReviewDecision === "QUERY_RAISED" ? (
+                  <>
+                    <AlertCircle size={12} className="mr-1" /> Dispatch Statutory Notice to Institution
+                  </>
+                ) : statementReviewDecision === "REJECTED" ? (
+                  <>
+                    <XCircle size={12} className="mr-1" /> Reject Statement
                   </>
                 ) : (
                   <>
@@ -2068,7 +2082,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
               <span className="font-bold text-purple-950 block text-xs">
                 Executive Review Decision & Minutes Order
               </span>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-xs text-slate-700">
                   <input
                     type="radio"
@@ -2079,7 +2093,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                   />
                   <span>Approve & Reconcile</span>
                 </label>
-                <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-xs text-slate-700">
+                <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-xs text-amber-900 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                   <input
                     type="radio"
                     name="statementDecision"
@@ -2087,9 +2101,9 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                     checked={statementReviewDecision === "QUERY_RAISED"}
                     onChange={() => setStatementReviewDecision("QUERY_RAISED")}
                   />
-                  <span>Raise Clarification Query</span>
+                  <span>Raise Clarification Query & Issue Statutory Notice</span>
                 </label>
-                <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-xs text-slate-700">
+                <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-xs text-rose-800">
                   <input
                     type="radio"
                     name="statementDecision"
@@ -2100,9 +2114,20 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                   <span>Reject Statement</span>
                 </label>
               </div>
+
+              {statementReviewDecision === "QUERY_RAISED" && (
+                <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-lg text-[11px] text-amber-900 leading-relaxed">
+                  <strong className="font-bold">⚠️ Statutory Notice Dispatch:</strong> Confirming this review will immediately log a formal Statutory Notice on the Institution Representative's dashboard with a mandatory compliance window of 7 business days to submit reconciliation proofs or CA-certified ledger adjustments.
+                </div>
+              )}
+
               <Textarea
                 rows={2}
-                placeholder="Record statutory observations (e.g., Weekly cashflow reconciled; operating balance satisfies baseline liquidity requirements)..."
+                placeholder={
+                  statementReviewDecision === "QUERY_RAISED"
+                    ? "Specify inquiry reason / deficit details (e.g., Unexplained net outflow of ₹12,50,000 detected on 14 Oct; provide CA-certified reconciliation voucher)..."
+                    : "Record statutory observations (e.g., Weekly cashflow reconciled; operating balance satisfies baseline liquidity requirements)..."
+                }
                 value={statementReviewNotes}
                 onChange={(e) => setStatementReviewNotes(e.target.value)}
               />
