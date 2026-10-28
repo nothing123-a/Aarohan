@@ -98,7 +98,7 @@ export interface ReleaseDecisionPayload {
   officer_id: string;
   officer_name: string;
   officer_role: string;
-  decision: "RECOMMENDED_FOR_APPROVAL" | "APPROVED" | "REJECTED" | "RETURNED_FOR_QUERY";
+  decision: "RECOMMENDED_FOR_APPROVAL" | "APPROVED" | "REJECTED" | "RETURNED_FOR_QUERY" | "COMPLETED";
   decision_reason: string;
 }
 
@@ -181,20 +181,35 @@ export interface TechnicalScrutinyPayload {
 
 export interface ExecutiveDecisionPayload {
   instrument_id: string;
-  decision: "APPROVE" | "REJECT" | "RETURN_FOR_VERIFICATION";
+  decision: "APPROVE" | "REJECT" | "RETURN_FOR_VERIFICATION" | "REQUEST_CLARIFICATION";
   sanction_notes?: string;
+  decision_notes?: string;
   exception_permitted?: boolean;
   exception_reason?: string;
 }
 
 export interface VerificationMethodSummary {
   method: string;
-  status: "VERIFIED" | "DISCREPANCY_FOUND" | "PENDING" | "UNABLE_TO_VERIFY" | "NOT_AVAILABLE" | "REQUIRES_MANUAL_REVIEW";
+  status: "VERIFIED" | "DISCREPANCY_FOUND" | "PENDING" | "UNABLE_TO_VERIFY" | "NOT_AVAILABLE" | "REQUIRES_MANUAL_REVIEW" | "SERVICE_UNAVAILABLE" | "INVALID_REFERENCE" | "PENDING_CONSENT" | "CONSENT_EXPIRED" | "FIELD_MISMATCH" | "FIP_UNSUPPORTED";
   source_of_evidence: string;
-  evidence_date: string;
+  evidence_date?: string | null;
+  evidence_reference?: string | null;
   findings: string;
   outstanding_issues?: string | null;
   reviewer_notes: string;
+  data_source?: string;
+}
+
+export interface FundAllocationDecision {
+  required_amount: number;
+  observed_amount?: number | null;
+  observed_amount_display: string;
+  source_of_observed: string;
+  reporting_period: string;
+  difference?: number | null;
+  compliance_status: "COMPLIANT" | "DEFICIT" | "UNABLE_TO_VERIFY";
+  balance_details: string;
+  outstanding_issues?: string | null;
 }
 
 export interface MandatoryCheckItem {
@@ -215,6 +230,7 @@ export interface FinancialSummaryResponse {
   verification_status: string;
   financial_verification_status: string;
   has_duplicate_reference: boolean;
+  allocation_decision?: FundAllocationDecision;
   methods: VerificationMethodSummary[];
   mandatory_checks: MandatoryCheckItem[];
   mandatory_checks_passed: boolean;
@@ -525,8 +541,7 @@ export interface AATelemetryResponse {
   retrieved_at: string;
 }
 
-export const accountAggregatorService = {
-  listConsents: (params?: { institution_id?: string; status?: string }) =>
+export const accountAggregatorService = {  listConsents: (params?: { institution_id?: string; status?: string }) =>
     apiClient.get<AAConsentItem[]>("/account-aggregator/consents", { params }),
 
   initiateConsent: (payload: {
@@ -555,3 +570,131 @@ export const accountAggregatorService = {
     apiClient.get<AATelemetryResponse | null>(`/account-aggregator/instrument/${instrumentId}/evidence`),
 };
 
+
+// ─── Institution Dashboard Service ──────────────────────────────────────────
+export interface InstitutionFinancialStatus {
+  institution_id: string;
+  institution_name: string;
+  institution_code: string;
+  generated_at: string;
+  fdr_portfolio: {
+    total: number;
+    verified: number;
+    under_review: number;
+    pending: number;
+    clarification_required: number;
+    rejected: number;
+    instruments: Array<{
+      id: string;
+      reference_number: string;
+      instrument_type: string;
+      bank_name: string;
+      branch_name?: string;
+      amount: number;
+      submission_status: string;
+      verification_status: string;
+      financial_verification_status: string;
+      lifecycle_status: string;
+      maturity_date?: string;
+      days_to_maturity?: number;
+      is_maturing_soon: boolean;
+    }>;
+  };
+  statements: {
+    submitted_count: number;
+    missing_periods: Array<{ period_start: string; period_end: string; label: string }>;
+    missing_count: number;
+    recent: Array<{
+      id: string;
+      bank_name: string;
+      account_number: string;
+      period_start?: string;
+      period_end?: string;
+      submission_date?: string;
+      status: string;
+      original_filename: string;
+      reconciliation_passed?: boolean;
+      discrepancies_count: number;
+      reviewer_decision?: string;
+      reviewer_notes?: string;
+      has_reviewer_query: boolean;
+      balance_meets_requirement?: boolean;
+    }>;
+    statements_with_queries: Array<{
+      id: string;
+      period_start?: string;
+      period_end?: string;
+      reviewer_notes?: string;
+      has_reviewer_query: boolean;
+    }>;
+  };
+  financial_discrepancies: {
+    total_open: number;
+    open_alerts: Array<{
+      id: string;
+      alert_type: string;
+      severity: string;
+      title: string;
+      description: string;
+      status: string;
+      created_at?: string;
+    }>;
+    clarification_requests: Array<{
+      fdr_id: string;
+      fdr_number: string;
+      status: string;
+      financial_status: string;
+      notes?: string;
+      issued_at?: string;
+    }>;
+  };
+  upcoming_maturities: Array<{
+    fdr_id: string;
+    reference_number: string;
+    bank_name: string;
+    amount: number;
+    maturity_date?: string;
+    days_to_maturity?: number;
+    is_critical: boolean;
+  }>;
+  refund_requests: {
+    total: number;
+    pending: number;
+    approved_pending_discharge: number;
+    completed: number;
+    requests: Array<{
+      id: string;
+      instrument_id: string;
+      fdr_number: string;
+      bank_name: string;
+      amount: number;
+      request_type: string;
+      status: string;
+      submitted_at: string;
+      reason: string;
+      regulatory_clause?: string;
+      latest_decision?: string;
+      latest_decision_notes?: string;
+      latest_decision_at?: string;
+      has_pending_query: boolean;
+      noc_voucher_ref?: string;
+    }>;
+  };
+  notifications: Array<{
+    type: string;
+    severity: "CRITICAL" | "WARNING" | "INFO";
+    title: string;
+    body: string;
+    action_required: boolean;
+    fdr_id?: string;
+    statement_id?: string;
+    request_id?: string;
+  }>;
+}
+
+export const institutionDashboardService = {
+  getFinancialStatus: (institutionId?: string) =>
+    apiClient.get<InstitutionFinancialStatus>("/institution-dashboard/financial-status", {
+      params: institutionId ? { institution_id: institutionId } : undefined,
+    }),
+};

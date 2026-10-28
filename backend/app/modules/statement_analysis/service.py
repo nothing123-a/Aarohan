@@ -172,6 +172,7 @@ def create_statement_upload(
     analysis = perform_statement_analysis(statement_id=stmt.id, db=db)
 
     return {
+        "id": stmt.id,
         "statement_id": stmt.id,
         "institution_id": inst.id,
         "institution_name": inst.name,

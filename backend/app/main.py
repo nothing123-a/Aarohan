@@ -23,6 +23,7 @@ from app.modules.reports.router import router as reports_router
 from app.modules.monitoring.router import router as monitoring_router
 from app.modules.statement_analysis.router import router as statements_router
 from app.modules.account_aggregator.router import router as account_aggregator_router
+from app.api.v1.institution_dashboard import router as institution_dashboard_router
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -95,6 +96,7 @@ app.include_router(reports_router, prefix=settings.API_V1_PREFIX)
 app.include_router(monitoring_router, prefix=settings.API_V1_PREFIX)
 app.include_router(statements_router, prefix=settings.API_V1_PREFIX)
 app.include_router(account_aggregator_router, prefix=settings.API_V1_PREFIX)
+app.include_router(institution_dashboard_router, prefix=settings.API_V1_PREFIX)
 
 # Also mount under /api prefix for standard frontend service calls
 app.include_router(auth_router, prefix="/api")
@@ -110,6 +112,7 @@ app.include_router(reports_router, prefix="/api")
 app.include_router(monitoring_router, prefix="/api")
 app.include_router(statements_router, prefix="/api")
 app.include_router(account_aggregator_router, prefix="/api")
+app.include_router(institution_dashboard_router, prefix="/api")
 
 @app.get("/api/v1/health")
 @app.get("/health")

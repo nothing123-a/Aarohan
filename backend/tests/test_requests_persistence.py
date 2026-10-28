@@ -161,7 +161,7 @@ class TestReleaseRequestsPersistence(unittest.TestCase):
         app_res = asyncio.run(record_release_decision(req_id, aa_payload, db=self.db))
         self.assertEqual(app_res["status"], "SUCCESS")
 
-        # Verify database state after final approval
+        # Verify database state after administrative approval (authorizing Bank Discharge NOC)
         self.db.refresh(req)
         self.assertEqual(req.status, "approved")
 
@@ -169,16 +169,25 @@ class TestReleaseRequestsPersistence(unittest.TestCase):
         decisions = self.db.query(ReleaseRefundDecision).filter(ReleaseRefundDecision.request_id == req_id).all()
         self.assertGreaterEqual(len(decisions), 2)
 
-        # Verify instrument lifecycle status is now 'released'
+        # Statutory safeguard: instrument is NOT yet marked completed/released, remains release_pending
         inst = self.db.query(FinancialInstrument).filter(FinancialInstrument.id == "fdr-007").first()
-        self.assertEqual(inst.lifecycle_status, "released")
+        self.assertEqual(inst.lifecycle_status, "release_pending")
 
-        # Verify lifecycle event was created
-        event = self.db.query(InstrumentLifecycleEvent).filter(
-            InstrumentLifecycleEvent.instrument_id == "fdr-007",
-            InstrumentLifecycleEvent.event_type == "released",
-        ).first()
-        self.assertIsNotNone(event)
+        # Step 6: Confirmation of bank payout / completion marks instrument as released
+        complete_payload = ReleaseDecisionRecord(
+            officer_id="usr-aa-01",
+            officer_name="Dr. Rajesh Sharma",
+            officer_role="approving_authority",
+            decision="COMPLETED",
+            decision_reason="Bank confirmed electronic payout via RTGS/NEFT transaction.",
+        )
+        comp_res = asyncio.run(record_release_decision(req_id, complete_payload, db=self.db))
+        self.assertEqual(comp_res["status"], "SUCCESS")
+
+        self.db.refresh(req)
+        self.assertEqual(req.status, "completed")
+        self.db.refresh(inst)
+        self.assertEqual(inst.lifecycle_status, "released")
 
 if __name__ == "__main__":
     unittest.main()

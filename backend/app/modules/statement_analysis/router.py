@@ -117,6 +117,8 @@ async def upload_bank_statement(
         }
     except StatementServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Statement processing error: {str(exc)}")
 

@@ -55,7 +55,7 @@ class ReleaseDecisionRecord(BaseModel):
     officer_id: str
     officer_name: str
     officer_role: str
-    decision: Literal["RECOMMENDED_FOR_APPROVAL", "APPROVED", "REJECTED", "RETURNED_FOR_QUERY"]
+    decision: Literal["RECOMMENDED_FOR_APPROVAL", "APPROVED", "REJECTED", "RETURNED_FOR_QUERY", "COMPLETED"]
     decision_reason: str = Field(..., min_length=10)
 
 # ─── SERIALIZATION HELPER ─────────────────────────────────────────────
@@ -120,6 +120,7 @@ def serialize_release_request(req: ReleaseRefundRequest, db: Session) -> dict:
         "submitted": "PENDING_SCRUTINY",
         "under_review": "SCRUTINY_RECOMMENDED",
         "approved": "APPROVED_PENDING_DISCHARGE",
+        "completed": "COMPLETED",
         "released": "RELEASED",
         "rejected": "REJECTED",
         "returned_for_correction": "RETURNED_FOR_QUERY",
@@ -133,21 +134,31 @@ def serialize_release_request(req: ReleaseRefundRequest, db: Session) -> dict:
         "institution_id": institution_id,
         "institution_name": inst_name,
         "bank_name": bank_name,
+        "branch_name": inst.branch_name if inst else None,
+        "account_number": inst.account_number if inst else None,
         "principal_amount": amount,
+        "maturity_date": inst.maturity_date.isoformat() if (inst and inst.maturity_date) else None,
+        "verification_status": inst.verification_status if inst else "not_started",
+        "financial_verification_status": inst.financial_verification_status if inst else "pending",
+        "lifecycle_status": inst.lifecycle_status if inst else "active",
         "request_type": req.request_type.upper(),
         "justification_reason": req.reason,
         "regulatory_clause_reference": req.regulatory_clause or "",
         "supporting_documents": [
             f"{bank_name.replace(' ', '_')}_Certificate.pdf",
             "SRO_No_Dues_Clearance_Certificate.pdf",
+            "Student_Refund_No_Liability_Clearance.pdf",
         ],
         "applicant_name": req_user.display_name if req_user else "Authorized Institution Representative",
         "applicant_designation": "Head of Institution / Representative",
         "submission_date": req.submitted_at.isoformat() if req.submitted_at else req.created_at.isoformat(),
         "status": display_status,
         "decision_history": history,
-        "nocVoucherRef": f"AICTE/NOC/2026/DIS-{req.id}" if req.status.lower() == "approved" else None,
+        "nocVoucherRef": f"AICTE/NOC/2026/DIS-{req.id}" if req.status.lower() in ("approved", "completed", "released") else None,
     }
+
+def _safe_user(user: Optional[User]) -> Optional[User]:
+    return user if isinstance(user, User) else None
 
 # ─── ENDPOINTS ───────────────────────────────────────────────────────
 
@@ -162,10 +173,11 @@ async def list_release_requests(
     Automatically scopes query to authenticated institution representative's institution.
     """
     query = db.query(ReleaseRefundRequest)
+    user = _safe_user(current_user)
     
     # Institution scoping guard
-    if current_user and current_user.role in ["institution_representative", "depositor"]:
-        user_inst_id = get_user_institution_id(current_user, db)
+    if user and user.role in ["institution_representative", "depositor"]:
+        user_inst_id = get_user_institution_id(user, db)
         if user_inst_id:
             query = query.join(FinancialInstrument).filter(FinancialInstrument.institution_id == user_inst_id)
     elif institution_id:
@@ -186,8 +198,9 @@ async def get_release_request(
     if not req:
         raise HTTPException(status_code=404, detail=f"Release request {release_id} not found.")
         
-    if current_user and current_user.role in ["institution_representative", "depositor"]:
-        user_inst_id = get_user_institution_id(current_user, db)
+    user = _safe_user(current_user)
+    if user and user.role in ["institution_representative", "depositor"]:
+        user_inst_id = get_user_institution_id(user, db)
         inst = req.instrument or db.query(FinancialInstrument).filter(FinancialInstrument.id == req.instrument_id).first()
         if inst and inst.institution_id != user_inst_id:
             raise HTTPException(
@@ -209,10 +222,11 @@ async def submit_release_request(
     """
     now = datetime.now(timezone.utc)
     new_id = f"rel-{uuid.uuid4().hex[:6]}"
+    user = _safe_user(current_user)
 
     # Validate institution representative scope
-    if current_user and current_user.role in ["institution_representative", "depositor"]:
-        user_inst_id = get_user_institution_id(current_user, db)
+    if user and user.role in ["institution_representative", "depositor"]:
+        user_inst_id = get_user_institution_id(user, db)
         if user_inst_id and payload.institution_id != user_inst_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -311,8 +325,9 @@ async def record_release_decision(
     - Only Approving Authority can issue final APPROVED decision.
     """
     # Derive role from authenticated token, fall back to payload for demo tokens
-    caller_role = current_user.role if current_user else payload.officer_role
-    caller_id   = current_user.id   if current_user else (payload.officer_id or "usr-aa-01")
+    user = _safe_user(current_user)
+    caller_role = user.role if user else payload.officer_role
+    caller_id   = user.id   if user else (payload.officer_id or "usr-aa-01")
 
     # Check 1: Institution representatives barred from all decision actions
     if caller_role in ["institution_representative", "depositor"]:
@@ -365,6 +380,13 @@ async def record_release_decision(
         req.status = "rejected"
     elif payload.decision == "RETURNED_FOR_QUERY":
         req.status = "returned_for_correction"
+    elif payload.decision == "COMPLETED":
+        if req.status != "approved":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot mark as completed: Request must first be in 'approved' status awaiting discharge confirmation.",
+            )
+        req.status = "completed"
 
     # Persist decision
     new_decision = ReleaseRefundDecision(
@@ -377,22 +399,51 @@ async def record_release_decision(
     )
     db.add(new_decision)
 
-    # If approved, update instrument to 'released'
+    # Instrument lifecycle transitions
     inst = db.query(FinancialInstrument).filter(FinancialInstrument.id == req.instrument_id).first()
-    if payload.decision == "APPROVED" and inst:
+    if inst:
         prev_status = inst.lifecycle_status
-        inst.lifecycle_status = "released"
-        lifecycle_event = InstrumentLifecycleEvent(
-            id=f"evt-{uuid.uuid4().hex[:6]}",
-            instrument_id=inst.id,
-            event_type="released",
-            previous_status=prev_status,
-            new_status="released",
-            initiated_by_user_id=caller_id,
-            event_notes=f"Released upon Approving Authority sign-off. {payload.decision_reason}",
-            occurred_at=now,
-        )
-        db.add(lifecycle_event)
+        if payload.decision == "APPROVED":
+            # Approved for release, but pending actual banking discharge (never mark as completed prematurely)
+            inst.lifecycle_status = "release_pending"
+            lifecycle_event = InstrumentLifecycleEvent(
+                id=f"evt-{uuid.uuid4().hex[:6]}",
+                instrument_id=inst.id,
+                event_type="release_approved_pending_discharge",
+                previous_status=prev_status,
+                new_status="release_pending",
+                initiated_by_user_id=caller_id,
+                event_notes=f"Approved by Approving Authority. Bank Discharge NOC generated. Awaiting bank encashment. {payload.decision_reason}",
+                occurred_at=now,
+            )
+            db.add(lifecycle_event)
+        elif payload.decision == "COMPLETED":
+            # Actual financial disbursement / discharge completed
+            inst.lifecycle_status = "released"
+            lifecycle_event = InstrumentLifecycleEvent(
+                id=f"evt-{uuid.uuid4().hex[:6]}",
+                instrument_id=inst.id,
+                event_type="released",
+                previous_status=prev_status,
+                new_status="released",
+                initiated_by_user_id=caller_id,
+                event_notes=f"Financial disbursement & discharge confirmed. {payload.decision_reason}",
+                occurred_at=now,
+            )
+            db.add(lifecycle_event)
+        elif payload.decision == "REJECTED":
+            inst.lifecycle_status = "active"
+            lifecycle_event = InstrumentLifecycleEvent(
+                id=f"evt-{uuid.uuid4().hex[:6]}",
+                instrument_id=inst.id,
+                event_type="release_rejected",
+                previous_status=prev_status,
+                new_status="active",
+                initiated_by_user_id=caller_id,
+                event_notes=f"Release claim rejected. Reverted to active status. {payload.decision_reason}",
+                occurred_at=now,
+            )
+            db.add(lifecycle_event)
 
     # Record Audit Event
     audit_evt = AuditEvent(

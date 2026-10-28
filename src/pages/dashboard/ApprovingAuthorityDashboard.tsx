@@ -21,11 +21,14 @@ import {
   ArrowDownRight,
   Eye,
   Layers,
+  Upload,
+  Info,
 } from "lucide-react";
 import { StatCard, Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
-import { Textarea } from "@/components/ui/FormFields";
+import { Textarea, Input } from "@/components/ui/FormFields";
+import { FileUpload } from "@/components/ui/FileUpload";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { formatCurrency, formatDate } from "@/utils";
@@ -124,6 +127,105 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
     }
   };
 
+  // ─── UPLOAD WEEKLY STATEMENT TO TALLY STATE ───────────────────────────
+  const [tallyModalOpen, setTallyModalOpen] = useState(false);
+  const [tallyFdrForUpload, setTallyFdrForUpload] = useState<CentralFDRRecord | null>(null);
+  const [tallyFile, setTallyFile] = useState<File | null>(null);
+  const [tallyInstitutionId, setTallyInstitutionId] = useState("");
+  const [tallyInstitutionName, setTallyInstitutionName] = useState("");
+  const [tallyBankName, setTallyBankName] = useState("");
+  const [tallyAccountNumber, setTallyAccountNumber] = useState("");
+  const [tallyPeriodStart, setTallyPeriodStart] = useState("");
+  const [tallyPeriodEnd, setTallyPeriodEnd] = useState("");
+  const [tallyRefNumber, setTallyRefNumber] = useState("");
+  const [tallyNotes, setTallyNotes] = useState("");
+  const [tallyLoading, setTallyLoading] = useState(false);
+  const [tallyError, setTallyError] = useState<string | null>(null);
+
+  const handleOpenTallyModal = (record: CentralFDRRecord | null) => {
+    setTallyFdrForUpload(record);
+    setTallyError(null);
+    setTallyFile(null);
+    const todayStr = new Date().toISOString().split("T")[0];
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
+    if (record) {
+      setTallyInstitutionId(record.institutionId || "inst-001");
+      setTallyInstitutionName(record.institutionName);
+      setTallyBankName(record.bankName);
+      setTallyAccountNumber(record.accountNumber || `ACC-${record.fdrNumber}`);
+      setTallyRefNumber(record.fdrNumber);
+      setTallyPeriodStart(sevenDaysAgo);
+      setTallyPeriodEnd(todayStr);
+      setTallyNotes(`Direct statement upload for tallying against FDR #${record.fdrNumber} allocation.`);
+    } else {
+      setTallyInstitutionId("inst-001");
+      setTallyInstitutionName("Delhi Technological University (DTU)");
+      setTallyBankName("State Bank of India");
+      setTallyAccountNumber("38291048291");
+      setTallyRefNumber("");
+      setTallyPeriodStart(sevenDaysAgo);
+      setTallyPeriodEnd(todayStr);
+      setTallyNotes("Approver weekly statement upload for reconciliation and tallying.");
+    }
+    setTallyModalOpen(true);
+  };
+
+  const handleExecuteTallyUpload = async () => {
+    setTallyError(null);
+    if (!tallyFile) { setTallyError("Please attach a bank statement file (CSV or PDF)."); return; }
+    if (!tallyBankName.trim()) { setTallyError("Bank name is required."); return; }
+    if (!tallyAccountNumber.trim()) { setTallyError("Account or deposit reference number is required."); return; }
+    if (!tallyPeriodStart || !tallyPeriodEnd) { setTallyError("Reporting period start and end dates are required."); return; }
+    if (tallyPeriodEnd < tallyPeriodStart) { setTallyError("Period end date must be on or after start date."); return; }
+
+    const allowed = ["application/pdf", "text/csv", "application/vnd.ms-excel"];
+    if (!allowed.includes(tallyFile.type) && !tallyFile.name.endsWith(".csv") && !tallyFile.name.endsWith(".pdf")) {
+      setTallyError("Only PDF and CSV statement formats are supported.");
+      return;
+    }
+
+    setTallyLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", tallyFile);
+      formData.append("institution_id", tallyInstitutionId);
+      formData.append("bank_name", tallyBankName.trim());
+      formData.append("account_number", tallyAccountNumber.trim());
+      formData.append("period_start", tallyPeriodStart);
+      formData.append("period_end", tallyPeriodEnd);
+      formData.append("statement_source", "direct_upload");
+      if (tallyRefNumber.trim()) formData.append("reference_number", tallyRefNumber.trim());
+      if (tallyNotes.trim()) formData.append("notes", tallyNotes.trim());
+
+      const res = await statementService.upload(formData);
+      const uploadData = res.data;
+
+      setFeedbackSuccess(
+        uploadData.message || "Weekly statement successfully uploaded and tallied against FDR records!"
+      );
+      setTallyModalOpen(false);
+
+      // Refresh statements ledger
+      await refetchStatements();
+
+      // If the Stage 2 Consolidated Financial Summary modal is open, re-pull financial summary
+      if (selectedFdrForSummary) {
+        try {
+          const summaryRes = await verificationService.getFinancialSummary(selectedFdrForSummary.id);
+          setFinancialSummary(summaryRes.data);
+        } catch (e) {
+          console.error("Failed to refresh financial summary after statement tally upload:", e);
+        }
+      }
+    } catch (err: any) {
+      setTallyError(
+        err?.response?.data?.detail || "Failed to upload and tally statement. Please verify file format and try again."
+      );
+    } finally {
+      setTallyLoading(false);
+    }
+  };
+
   // ─── STAGE 2: EXECUTIVE FINANCIAL VERIFICATION STATE ───────────────────
   const [fdrCases, setFdrCases] = useState<CentralFDRRecord[]>(CENTRAL_FDR_RECORDS);
   const [selectedFdrForSummary, setSelectedFdrForSummary] = useState<CentralFDRRecord | null>(null);
@@ -138,7 +240,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
   // ─── RELEASE & REFUND SANCTIONS STATE (Existing) ───────────────────────
   const [cases, setCases] = useState<ReleaseApprovalCase[]>(getApprovalCases());
   const [selectedCase, setSelectedCase] = useState<ReleaseApprovalCase | null>(null);
-  const [decisionModalMode, setDecisionModalMode] = useState<"APPROVE" | "REJECT" | "RETURN" | null>(null);
+  const [decisionModalMode, setDecisionModalMode] = useState<"APPROVE" | "REJECT" | "RETURN" | "COMPLETE" | null>(null);
   const [decisionReason, setDecisionReason] = useState("");
   const [feedbackSuccess, setFeedbackSuccess] = useState<string | null>(null);
 
@@ -253,9 +355,19 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
 
   // Submit Official Executive Decision (Stage 2)
   const handleExecuteFinancialDecision = async (
-    decision: "APPROVE" | "REJECT" | "RETURN_FOR_VERIFICATION"
+    decision: "APPROVE" | "REJECT" | "RETURN_FOR_VERIFICATION" | "REQUEST_CLARIFICATION"
   ) => {
     if (!selectedFdrForSummary) return;
+
+    if (decision === "REJECT" && (!executiveNotes || executiveNotes.trim().length < 10)) {
+      alert("A mandatory reason (minimum 10 characters) is required to reject financial verification.");
+      return;
+    }
+    if (decision === "REQUEST_CLARIFICATION" && (!executiveNotes || executiveNotes.trim().length < 10)) {
+      alert("Please provide specific clarification query details in the notes field (minimum 10 characters).");
+      return;
+    }
+
     setIsSubmittingDecision(true);
 
     try {
@@ -263,6 +375,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
         instrument_id: selectedFdrForSummary.id,
         decision,
         sanction_notes: executiveNotes || `Executive Financial Sanction: ${decision}`,
+        decision_notes: executiveNotes || `Executive Financial Sanction: ${decision}`,
         exception_permitted: exceptionPermitted,
         exception_reason: exceptionPermitted ? exceptionReason : undefined,
       });
@@ -274,7 +387,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
             ? {
                 ...c,
                 status: decision === "APPROVE" ? "verified" : decision === "REJECT" ? "rejected" : c.status,
-                scrutinyStatus: decision === "APPROVE" ? "SCRUTINY_PASSED" : c.scrutinyStatus,
+                scrutinyStatus: decision === "APPROVE" ? "SCRUTINY_PASSED" : decision === "REQUEST_CLARIFICATION" ? "OBSERVATION_ISSUED" : c.scrutinyStatus,
               }
             : c
         )
@@ -282,26 +395,17 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
 
       const msgs = {
         APPROVE: "Financial Verification Officially APPROVED & Sanctioned",
-        REJECT: "Deposit Financial Verification REJECTED",
+        REJECT: "Deposit Financial Verification REJECTED with recorded reason",
         RETURN_FOR_VERIFICATION: "Returned to Technical Scrutiny Cell for Re-investigation",
+        REQUEST_CLARIFICATION: "Clarification Query Dispatched to Institution & Scrutiny Cell",
       };
 
       setFeedbackSuccess(`Instrument #${selectedFdrForSummary.fdrNumber}: ${msgs[decision]}.`);
       setFinancialSummaryModalOpen(false);
       setSelectedFdrForSummary(null);
       setTimeout(() => setFeedbackSuccess(null), 5000);
-    } catch {
-      setFdrCases((prev) =>
-        prev.map((c) =>
-          c.id === selectedFdrForSummary.id
-            ? { ...c, status: decision === "APPROVE" ? "verified" : c.status }
-            : c
-        )
-      );
-      setFeedbackSuccess(`Decision recorded: Instrument #${selectedFdrForSummary.fdrNumber} -> ${decision}.`);
-      setFinancialSummaryModalOpen(false);
-      setSelectedFdrForSummary(null);
-      setTimeout(() => setFeedbackSuccess(null), 5000);
+    } catch (err: any) {
+      alert("Failed to submit executive decision: " + (err?.response?.data?.detail || err.message));
     } finally {
       setIsSubmittingDecision(false);
     }
@@ -368,7 +472,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
     });
   }, [liveCases, categoryFilter]);
 
-  const handleOpenDecision = (item: ReleaseApprovalCase, mode: "APPROVE" | "REJECT" | "RETURN") => {
+  const handleOpenDecision = (item: ReleaseApprovalCase, mode: "APPROVE" | "REJECT" | "RETURN" | "COMPLETE") => {
     setSelectedCase(item);
     setDecisionModalMode(mode);
     setDecisionReason("");
@@ -378,8 +482,13 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
   const handleExecuteDecision = async () => {
     if (!selectedCase || !decisionModalMode) return;
 
+    if ((decisionModalMode === "REJECT" || decisionModalMode === "RETURN") && (!decisionReason || decisionReason.trim().length < 10)) {
+      alert("A mandatory reason (minimum 10 characters) is required for this action.");
+      return;
+    }
+
     const newStatus =
-      decisionModalMode === "APPROVE" ? "APPROVED" : decisionModalMode === "REJECT" ? "REJECTED" : "RETURNED";
+      decisionModalMode === "APPROVE" ? "APPROVED" : decisionModalMode === "COMPLETE" ? "RELEASED" : decisionModalMode === "REJECT" ? "REJECTED" : "RETURNED";
 
     setCases((prev) =>
       prev.map((c) =>
@@ -390,11 +499,11 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
               previousDecisions: [
                 ...c.previousDecisions,
                 {
-                  stage: "Statutory Approval",
+                  stage: decisionModalMode === "COMPLETE" ? "Bank Discharge Confirmation" : "Statutory Approval",
                   officer: `${user.name} (${user.designation})`,
                   decision: newStatus,
                   timestamp: new Date().toISOString().replace("T", " ").slice(0, 16),
-                  remarks: decisionReason,
+                  remarks: decisionReason || (decisionModalMode === "APPROVE" ? "Approved pending bank discharge" : "Disbursement confirmed"),
                 },
               ],
             }
@@ -408,15 +517,24 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
         officer_id: user.id || "usr-aa-01",
         officer_name: user.name || "Member Secretary",
         officer_role: "approving_authority",
-        decision: decisionModalMode === "APPROVE" ? "APPROVED" : decisionModalMode === "REJECT" ? "REJECTED" : "RETURNED_FOR_QUERY",
-        decision_reason: decisionReason,
+        decision: decisionModalMode === "APPROVE" ? "APPROVED" : decisionModalMode === "COMPLETE" ? "COMPLETED" : decisionModalMode === "REJECT" ? "REJECTED" : "RETURNED_FOR_QUERY",
+        decision_reason: decisionReason || (decisionModalMode === "APPROVE" ? "Administrative approval sanctioned. Awaiting bank discharge." : "Discharge completed."),
       });
       refetch();
-    } catch (e) {
+    } catch (e: any) {
       console.warn("Backend decision recording fallback:", e);
     }
 
-    setFeedbackSuccess(`Statutory Decision registered: Case #${selectedCase.fdrNumber} marked as ${newStatus}. Bank Discharge NOC issued.`);
+    const actionText =
+      decisionModalMode === "APPROVE"
+        ? "Sanctioned & Approved (Awaiting Bank Discharge NOC encashment)"
+        : decisionModalMode === "COMPLETE"
+        ? "Marked as COMPLETED following confirmed bank payout"
+        : decisionModalMode === "REJECT"
+        ? "REJECTED with recorded statutory justification"
+        : "Returned to Scrutiny Cell for clarification";
+
+    setFeedbackSuccess(`Case #${selectedCase.fdrNumber}: ${actionText}.`);
     setTimeout(() => {
       setSelectedCase(null);
       setDecisionModalMode(null);
@@ -758,7 +876,16 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                   Multi-period cashflow reconciliation, reserve compliance, and high-value withdrawal scrutiny.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold cursor-pointer"
+                  onClick={() => handleOpenTallyModal(null)}
+                >
+                  <Upload size={13} className="mr-1.5" />
+                  Upload Weekly Statement to Tally
+                </Button>
                 <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-slate-50 text-xs">
                   <button
                     onClick={() => setStatementFilter("ALL")}
@@ -1074,16 +1201,49 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                       ))}
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => {
+                          const matchingFdr = fdrCases.find(
+                            (f) => f.id === item.fdrId || f.fdrNumber === item.fdrNumber
+                          ) || {
+                            id: item.fdrId,
+                            fdrNumber: item.fdrNumber,
+                            institutionName: item.institutionName,
+                            bankName: item.bankName,
+                            principalAmount: item.principalAmount,
+                            maturityDate: "2027-01-14",
+                            status: "verified",
+                            scrutinyStatus: "SCRUTINY_PASSED",
+                          };
+                          handleOpenFinancialSummary(matchingFdr as any);
+                        }}
+                        className="text-indigo-700 border-indigo-200 hover:bg-indigo-50 font-semibold"
+                      >
+                        <Eye size={12} className="mr-1" /> Inspect Linked FDR & Evidence
+                      </Button>
+
                       {item.status === "APPROVED" && (
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          onClick={() => handleOpenNoc(item)}
-                          className="text-purple-700 border-purple-200 hover:bg-purple-50"
-                        >
-                          <Printer size={12} className="mr-1" /> View Bank Discharge NOC
-                        </Button>
+                        <>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() => handleOpenNoc(item)}
+                            className="text-purple-700 border-purple-200 hover:bg-purple-50"
+                          >
+                            <Printer size={12} className="mr-1" /> View Bank Discharge NOC
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() => handleOpenDecision(item, "COMPLETE")}
+                            className="text-emerald-700 border-emerald-300 hover:bg-emerald-50 font-semibold"
+                          >
+                            <CheckCircle2 size={12} className="mr-1" /> Confirm Payout / Complete
+                          </Button>
+                        </>
                       )}
                       {item.status === "PENDING_APPROVAL" && (
                         <>
@@ -1093,7 +1253,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                             onClick={() => handleOpenDecision(item, "RETURN")}
                             className="text-amber-700 border-amber-200 hover:bg-amber-50"
                           >
-                            <RotateCcw size={12} className="mr-1" /> Return for Query
+                            <RotateCcw size={12} className="mr-1" /> Request Query / Info
                           </Button>
                           <Button
                             size="xs"
@@ -1105,7 +1265,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                           <Button
                             size="xs"
                             variant="primary"
-                            className="bg-emerald-600 hover:bg-emerald-700"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
                             onClick={() => handleOpenDecision(item, "APPROVE")}
                           >
                             <CheckCircle2 size={12} className="mr-1" /> Sanction & Issue NOC
@@ -1145,23 +1305,33 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   size="xs"
                   variant="outline"
                   onClick={() => handleExecuteFinancialDecision("RETURN_FOR_VERIFICATION")}
                   disabled={isSubmittingDecision}
-                  className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                  className="text-amber-700 border-amber-300 hover:bg-amber-50 font-semibold"
                 >
                   <RotateCcw size={12} className="mr-1" /> Return for Re-Scrutiny
+                </Button>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => handleExecuteFinancialDecision("REQUEST_CLARIFICATION")}
+                  disabled={isSubmittingDecision}
+                  className="text-purple-700 border-purple-300 hover:bg-purple-50 font-semibold"
+                >
+                  <AlertCircle size={12} className="mr-1" /> Request Clarification
                 </Button>
                 <Button
                   size="xs"
                   variant="destructive"
                   onClick={() => handleExecuteFinancialDecision("REJECT")}
                   disabled={isSubmittingDecision}
+                  className="font-semibold"
                 >
-                  <XCircle size={12} className="mr-1" /> Reject
+                  <XCircle size={12} className="mr-1" /> Reject (Mandatory Reason)
                 </Button>
                 <Button
                   size="xs"
@@ -1213,19 +1383,23 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                 </div>
               </div>
 
-              {/* 5 Separate Verification Methods Table */}
+              {/* PART 1: 4 Separate Verification Methods Table */}
               <div className="space-y-1.5">
-                <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                  <ShieldCheck size={14} className="text-purple-600" />
-                  <span>Consolidated Multi-Method Verification Evaluation:</span>
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                    <ShieldCheck size={14} className="text-purple-600" />
+                    <span>Part 1: Independent Multi-Method Financial Verification Summary</span>
+                  </span>
+                  <span className="text-[10px] text-slate-500 italic">Distinct statutory methods evaluated separately</span>
+                </div>
                 <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead className="bg-slate-100 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
                       <tr>
                         <th className="py-2.5 px-3">Verification Method</th>
                         <th className="py-2.5 px-2.5">Status</th>
-                        <th className="py-2.5 px-3">Source of Evidence & Date</th>
+                        <th className="py-2.5 px-3">Source of Evidence & Ref</th>
+                        <th className="py-2.5 px-2.5">Timestamp</th>
                         <th className="py-2.5 px-3">Relevant Findings & Outstanding Issues</th>
                         <th className="py-2.5 px-3">Reviewer Notes</th>
                       </tr>
@@ -1235,21 +1409,42 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                         const statusColors: Record<string, string> = {
                           VERIFIED: "text-emerald-700 bg-emerald-50 border-emerald-200",
                           DISCREPANCY_FOUND: "text-rose-700 bg-rose-50 border-rose-200",
+                          FIELD_MISMATCH: "text-rose-700 bg-rose-50 border-rose-200",
                           PENDING: "text-amber-700 bg-amber-50 border-amber-200",
+                          PENDING_CONSENT: "text-amber-700 bg-amber-50 border-amber-200",
                           UNABLE_TO_VERIFY: "text-slate-600 bg-slate-100 border-slate-200",
                           NOT_AVAILABLE: "text-slate-500 bg-slate-50 border-slate-200",
+                          SERVICE_UNAVAILABLE: "text-amber-700 bg-amber-50 border-amber-200",
+                          INVALID_REFERENCE: "text-rose-700 bg-rose-50 border-rose-200",
+                          CONSENT_EXPIRED: "text-rose-700 bg-rose-50 border-rose-200",
                           REQUIRES_MANUAL_REVIEW: "text-purple-700 bg-purple-50 border-purple-200",
                         };
 
                         return (
                           <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
                             <td className="py-2.5 px-3 font-semibold text-slate-900">
-                              {m.method}
+                              <div>
+                                <span>{m.method}</span>
+                                {(m.method.includes("Weekly") || m.method.includes("Statement")) && (
+                                  <div className="mt-1">
+                                    <Button
+                                      size="xs"
+                                      variant="outline"
+                                      className="text-purple-700 border-purple-300 hover:bg-purple-100 font-bold inline-flex items-center text-[10px] py-0.5 px-2 cursor-pointer shadow-2xs"
+                                      onClick={() => handleOpenTallyModal(selectedFdrForSummary)}
+                                      title="Upload weekly bank statement to tally and reconcile eligible balance"
+                                    >
+                                      <Upload size={10} className="mr-1" />
+                                      Tally Statement
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
                             </td>
                             <td className="py-2.5 px-2.5 whitespace-nowrap">
                               <span
                                 className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                  statusColors[m.status] || "text-slate-600 bg-slate-100"
+                                  statusColors[m.status] || "text-slate-600 bg-slate-100 border-slate-200"
                                 }`}
                               >
                                 {m.status.replace(/_/g, " ")}
@@ -1257,13 +1452,19 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                             </td>
                             <td className="py-2.5 px-3">
                               <span className="font-medium text-slate-800 block text-[11px]">{m.source_of_evidence}</span>
-                              <span className="text-[10px] text-slate-400 font-mono">{m.evidence_date}</span>
+                              {m.evidence_reference && (
+                                <span className="text-[10px] text-purple-700 font-mono block">{m.evidence_reference}</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-2.5 whitespace-nowrap text-[10px] text-slate-500 font-mono">
+                              {m.evidence_date || "—"}
                             </td>
                             <td className="py-2.5 px-3 max-w-[240px]">
                               <p className="text-slate-700 text-[11px] leading-tight">{m.findings}</p>
                               {m.outstanding_issues && (
-                                <p className="text-rose-600 text-[10px] font-medium mt-0.5">
-                                  Issue: {m.outstanding_issues}
+                                <p className="text-rose-600 text-[10px] font-medium mt-0.5 flex items-start gap-1">
+                                  <AlertTriangle size={10} className="shrink-0 mt-0.5" />
+                                  <span>{m.outstanding_issues}</span>
                                 </p>
                               )}
                             </td>
@@ -1278,12 +1479,90 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                 </div>
               </div>
 
-              {/* Mandatory Checks Evaluation & Regulatory Exception Gating */}
+              {/* PART 2: FUND ALLOCATION DECISION */}
+              {financialSummary.allocation_decision && (
+                <div className="p-3.5 bg-gradient-to-r from-purple-50/70 to-indigo-50/70 rounded-xl border border-purple-200 space-y-2">
+                  <div className="flex items-center justify-between border-b border-purple-200/60 pb-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <Coins size={14} className="text-purple-700" />
+                      <span className="font-bold text-slate-900 text-xs">Part 2: Fund Allocation Decision & APH Compliance</span>
+                    </div>
+                    <Badge
+                      variant={
+                        financialSummary.allocation_decision.compliance_status === "COMPLIANT"
+                          ? "success"
+                          : financialSummary.allocation_decision.compliance_status === "DEFICIT"
+                          ? "error"
+                          : "warning"
+                      }
+                    >
+                      {financialSummary.allocation_decision.compliance_status === "COMPLIANT"
+                        ? "ALLOCATION COMPLIANT"
+                        : financialSummary.allocation_decision.compliance_status === "DEFICIT"
+                        ? "ALLOCATION DEFICIT"
+                        : "UNABLE TO VERIFY"}
+                    </Badge>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                    <div className="p-2 bg-white rounded-lg border border-purple-100 shadow-2xs">
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold">Required Threshold</span>
+                      <span className="font-mono font-bold text-slate-900 text-xs">
+                        {formatCurrency(financialSummary.allocation_decision.required_amount)}
+                      </span>
+                    </div>
+                    <div className="p-2 bg-white rounded-lg border border-purple-100 shadow-2xs">
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold">Observed Eligible Amount</span>
+                      {financialSummary.allocation_decision.observed_amount !== null && financialSummary.allocation_decision.observed_amount !== undefined ? (
+                        <span className="font-mono font-bold text-purple-900 text-xs">
+                          {formatCurrency(financialSummary.allocation_decision.observed_amount)}
+                        </span>
+                      ) : (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                          Unable to Verify
+                        </span>
+                      )}
+                    </div>
+                    <div className="p-2 bg-white rounded-lg border border-purple-100 shadow-2xs">
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold">Evidence Source</span>
+                      <span className="font-semibold text-slate-800 block truncate" title={financialSummary.allocation_decision.source_of_observed}>
+                        {financialSummary.allocation_decision.source_of_observed}
+                      </span>
+                    </div>
+                    <div className="p-2 bg-white rounded-lg border border-purple-100 shadow-2xs">
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold">Reporting Period</span>
+                      <span className="text-slate-700 block truncate font-mono text-[10px]">
+                        {financialSummary.allocation_decision.reporting_period}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-slate-600 bg-white/80 p-2 rounded-lg border border-purple-100 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-800">Deposit & Balance Reconciliation Details:</span>
+                      {financialSummary.allocation_decision.difference !== null && financialSummary.allocation_decision.difference !== undefined && (
+                        <span className={`font-mono font-bold text-[10px] ${financialSummary.allocation_decision.difference >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                          Net Margin: {financialSummary.allocation_decision.difference >= 0 ? "+" : ""}{formatCurrency(financialSummary.allocation_decision.difference)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-slate-600 text-[11px] leading-relaxed">{financialSummary.allocation_decision.balance_details}</p>
+                    {financialSummary.allocation_decision.outstanding_issues && (
+                      <p className="text-rose-600 text-[10px] font-medium flex items-center gap-1 mt-0.5">
+                        <AlertTriangle size={11} className="shrink-0" />
+                        <span>{financialSummary.allocation_decision.outstanding_issues}</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* PART 3: Statutory Mandatory Checks Gating & Regulatory Exception Management */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {/* Mandatory Checks Card */}
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
                   <span className="font-bold text-slate-900 text-xs block">
-                    Statutory Mandatory Checks Gating
+                    Part 3: Statutory Mandatory Checks Gating
                   </span>
                   <div className="space-y-1.5">
                     {financialSummary.mandatory_checks.map((chk, idx) => (
@@ -1348,14 +1627,14 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
                 </div>
               </div>
 
-              {/* Authority Remarks */}
+              {/* Authority Remarks / Minute Notes */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Executive Sanctioning Authority Order / Minute Notes (Recorded in Audit Ledger)
+                  Executive Sanctioning Authority Order / Minute Notes (Recorded in Immutable Audit Ledger)
                 </label>
                 <Textarea
                   rows={2}
-                  placeholder="Official minute notes or sanction directions..."
+                  placeholder="Record formal statutory minute notes, directions, rejection grounds, or clarification requests..."
                   value={executiveNotes}
                   onChange={(e) => setExecutiveNotes(e.target.value)}
                   className="text-xs"
@@ -1381,7 +1660,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
             <Button
               size="sm"
               variant={
-                decisionModalMode === "APPROVE"
+                decisionModalMode === "APPROVE" || decisionModalMode === "COMPLETE"
                   ? "primary"
                   : decisionModalMode === "REJECT"
                   ? "destructive"
@@ -1392,6 +1671,8 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
               className={
                 decisionModalMode === "APPROVE"
                   ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                  : decisionModalMode === "COMPLETE"
+                  ? "bg-blue-600 hover:bg-blue-700 text-white"
                   : decisionModalMode === "RETURN"
                   ? "text-amber-700 border-amber-300 hover:bg-amber-50"
                   : undefined
@@ -1399,7 +1680,12 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
             >
               {decisionModalMode === "APPROVE" && (
                 <>
-                  <CheckCircle2 size={13} className="mr-1" /> Sign Sanction Order & Issue NOC
+                  <CheckCircle2 size={13} className="mr-1" /> Sanction Approval & Issue NOC
+                </>
+              )}
+              {decisionModalMode === "COMPLETE" && (
+                <>
+                  <CheckCircle2 size={13} className="mr-1" /> Confirm Bank Discharge & Complete
                 </>
               )}
               {decisionModalMode === "REJECT" && (
@@ -1421,9 +1707,11 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
             <span className="font-bold block">Sanction Action:</span>
             <p>
               {decisionModalMode === "APPROVE" &&
-                "Executing this action will formally relinquish AICTE lien, mark the instrument as RELEASED in the master register, and generate an authenticated Bank Discharge NOC."}
+                "Executing this action grants administrative approval and issues the authenticated Bank Discharge NOC. The request transitions to 'APPROVED_PENDING_DISCHARGE'. AICTE does not disburse funds directly; actual financial release is completed once the issuing bank confirms payout."}
+              {decisionModalMode === "COMPLETE" &&
+                "Executing this action records that the issuing bank has executed payout and confirmed full lien discharge, closing the case."}
               {decisionModalMode === "REJECT" &&
-                "Executing this action will reject the institution's claim. The fixed deposit lien will remain intact in AICTE custody."}
+                "Executing this action will reject the institution's claim with recorded statutory justification. The fixed deposit lien will remain intact in AICTE custody."}
               {decisionModalMode === "RETURN" &&
                 "The application will be sent back to the Scrutiny Desk for re-examination or institutional query."}
             </p>
@@ -1431,7 +1719,7 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Executive Statutory Reason / Minute Order (Mandatory)
+              Executive Statutory Reason / Minute Order (Mandatory, min 10 characters)
             </label>
             <Textarea
               rows={3}
@@ -1821,6 +2109,141 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
             </div>
           </div>
         ) : null}
+      </Dialog>
+
+      {/* ─── UPLOAD WEEKLY STATEMENT TO TALLY MODAL ───────────────────────── */}
+      <Dialog
+        open={tallyModalOpen}
+        onClose={() => setTallyModalOpen(false)}
+        size="lg"
+        title="Upload Weekly Bank Statement to Tally"
+        description={
+          tallyFdrForUpload
+            ? `Tallying statement against FDR #${tallyFdrForUpload.fdrNumber} for ${tallyFdrForUpload.institutionName}`
+            : "Upload institution weekly bank statement for cashflow reconciliation and allocation tallying."
+        }
+        footer={
+          <div className="flex items-center justify-between w-full">
+            <span className="text-[11px] text-slate-500 italic">
+              Automated multi-period cashflow reconciliation & allocation verification
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setTallyModalOpen(false)}
+                disabled={tallyLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                className="bg-purple-600 hover:bg-purple-700 text-white font-bold"
+                onClick={handleExecuteTallyUpload}
+                disabled={tallyLoading}
+              >
+                {tallyLoading ? (
+                  <>
+                    <RefreshCw size={13} className="animate-spin mr-1.5" />
+                    <span>Processing & Tallying...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload size={13} className="mr-1.5" />
+                    <span>Upload & Tally Statement</span>
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4 py-1 text-xs">
+          {tallyError && (
+            <Alert variant="error">
+              <p className="text-xs">{tallyError}</p>
+            </Alert>
+          )}
+
+          <div className="p-3 bg-purple-50/70 border border-purple-200 rounded-xl space-y-1">
+            <p className="font-bold text-purple-900 flex items-center gap-1.5">
+              <Info size={14} className="text-purple-700" />
+              <span>Statutory Reconciliation Protocol</span>
+            </p>
+            <p className="text-slate-600 text-[11px] leading-relaxed">
+              Weekly statements uploaded here are ingested and scrutinized by the backend statement analyzer.
+              Opening and closing balances, debit/credit arithmetic, and unencumbered reserves will be calculated and
+              cross-tallied against statutory fixed deposit security requirements.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <Input
+              label="Pledging Institution"
+              value={tallyInstitutionName}
+              onChange={(e) => setTallyInstitutionName(e.target.value)}
+              placeholder="e.g. Delhi Technological University"
+              required
+            />
+            <Input
+              label="Issuing Bank Name"
+              value={tallyBankName}
+              onChange={(e) => setTallyBankName(e.target.value)}
+              placeholder="e.g. State Bank of India"
+              required
+            />
+            <Input
+              label="Bank Account / Deposit Ref #"
+              value={tallyAccountNumber}
+              onChange={(e) => setTallyAccountNumber(e.target.value)}
+              placeholder="e.g. 38291048291 or FDR-ACC-001"
+              required
+            />
+            <Input
+              label="Associated FDR Certificate # (Optional)"
+              value={tallyRefNumber}
+              onChange={(e) => setTallyRefNumber(e.target.value)}
+              placeholder="e.g. FDR/AICTE/2026/001"
+            />
+            <Input
+              label="Reporting Period Start"
+              type="date"
+              value={tallyPeriodStart}
+              onChange={(e) => setTallyPeriodStart(e.target.value)}
+              required
+            />
+            <Input
+              label="Reporting Period End"
+              type="date"
+              value={tallyPeriodEnd}
+              onChange={(e) => setTallyPeriodEnd(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="space-y-1">
+            <FileUpload
+              label="Bank Statement File"
+              accept=".pdf,.csv"
+              description="PDF or CSV format bank transaction statement — maximum 15MB"
+              maxSizeBytes={15 * 1024 * 1024}
+              value={tallyFile}
+              onChange={setTallyFile}
+              required
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Textarea
+              label="Approver Audit Notes (Optional)"
+              rows={2}
+              value={tallyNotes}
+              onChange={(e) => setTallyNotes(e.target.value)}
+              placeholder="Add any specific context or observation regarding this statement upload..."
+            />
+          </div>
+        </div>
       </Dialog>
     </div>
   );

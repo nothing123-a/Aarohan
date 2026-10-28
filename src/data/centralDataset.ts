@@ -32,7 +32,7 @@ export interface ReleaseApprovalCase {
   principalAmount: number;
   requestType: "FULL_RELEASE" | "PARTIAL_REFUND" | "NOC_ISSUANCE";
   requestedDate: string;
-  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "RETURNED";
+  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "RETURNED" | "RELEASED" | "COMPLETED";
   scrutinyFinding: string;
   scrutinyOfficer: string;
   scrutinyDate: string;

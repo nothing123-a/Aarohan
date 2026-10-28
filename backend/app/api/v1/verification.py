@@ -92,7 +92,7 @@ class TechnicalScrutinyOutcomeRequest(BaseModel):
 
 class ExecutiveFinancialDecisionRequest(BaseModel):
     instrument_id: str
-    decision: str  # "APPROVED", "REJECTED", "RETURNED_FOR_VERIFICATION"
+    decision: str  # "APPROVED", "REJECTED", "RETURNED_FOR_VERIFICATION", "REQUEST_CLARIFICATION"
     # Accept both field names for backwards compatibility
     decision_notes: Optional[str] = None
     sanction_notes: Optional[str] = None  # alias accepted from frontend/tests
@@ -550,8 +550,8 @@ async def get_financial_verification_summary(
     )
 
     # Has official bank verification record?
-    bank_verif_rec = next((r for r in history_records if r.verification_method == "bank_sfms"), None)
-    has_bank_cbs = bank_verif_rec is not None and bank_verif_rec.outcome == "verified"
+    bank_verif_rec = next((r for r in history_records if r.verification_method in ("bank_api", "bank_sfms")), None)
+    has_bank_cbs = bank_verif_rec is not None and bank_verif_rec.outcome.lower() == "verified"
 
     # Technical Scrutiny status
     tech_status = "PENDING"
@@ -564,133 +564,231 @@ async def get_financial_verification_summary(
 
     today_str = datetime.now(timezone.utc).strftime("%d %b %Y")
 
-    # 5 Separate Verification Methods
-    methods = [
-        {
-            "method": "Technical Scrutiny & OCR Cross-Check",
-            "status": tech_status,
-            "source_of_evidence": "PyMuPDF & Tesseract OCR v5.3 Layout Extractor",
-            "evidence_date": inst.updated_at.strftime("%d %b %Y") if inst.updated_at else today_str,
-            "findings": (
-                "Document fields, reference number, principal denomination, and maturity date cross-matched."
-                if tech_status == "VERIFIED"
-                else "Discrepancy or query flagged during technical scrutiny."
-            ),
-            "outstanding_issues": (
-                f"{len(unresolved_discrepancies)} unresolved discrepancy flags."
-                if unresolved_discrepancies
-                else None
-            ),
-            "reviewer_notes": "Scrutiny Officer verification of physical certificate scan against institutional filing.",
-        },
-        {
+    # 1. Technical Scrutiny
+    method_1 = {
+        "method": "Technical Scrutiny & OCR Cross-Check",
+        "status": tech_status,
+        "source_of_evidence": "PyMuPDF & Tesseract OCR v5.3 Layout Extractor",
+        "evidence_date": inst.updated_at.strftime("%d %b %Y") if inst.updated_at else today_str,
+        "evidence_reference": f"DOC-SCRUTINY-{inst.id[:8]}",
+        "findings": (
+            "Document fields, reference number, principal denomination, and maturity date cross-matched."
+            if tech_status == "VERIFIED"
+            else "Discrepancy or query flagged during technical scrutiny."
+        ),
+        "outstanding_issues": (
+            f"{len(unresolved_discrepancies)} unresolved discrepancy flags."
+            if unresolved_discrepancies
+            else None
+        ),
+        "reviewer_notes": "Scrutiny Officer verification of physical certificate scan against institutional filing.",
+    }
+
+    # 2. Official Bank Verification
+    if bank_verif_rec:
+        b_outcome = bank_verif_rec.outcome.upper()
+        if b_outcome in ["VERIFIED", "DISCREPANCY_FOUND", "SERVICE_UNAVAILABLE", "INVALID_REFERENCE", "UNABLE_TO_VERIFY"]:
+            bank_status_val = b_outcome
+        elif b_outcome == "DISCREPANCY":
+            bank_status_val = "DISCREPANCY_FOUND"
+        else:
+            bank_status_val = b_outcome
+
+        method_2 = {
             "method": "Core Banking (CBS) / SFMS 2.0 Gateway",
-            "status": "VERIFIED" if has_bank_cbs else "PENDING",
-            "source_of_evidence": f"Public Sector Bank ({inst.bank_name}) Core Banking Host",
-            "evidence_date": bank_verif_rec.reviewed_at.strftime("%d %b %Y") if bank_verif_rec else today_str,
-            "findings": (
+            "status": bank_status_val,
+            "source_of_evidence": bank_verif_rec.source_of_evidence or f"Public Sector Bank ({inst.bank_name}) CBS Gateway",
+            "evidence_date": bank_verif_rec.evidence_date.strftime("%d %b %Y") if bank_verif_rec.evidence_date else (bank_verif_rec.reviewed_at.strftime("%d %b %Y") if bank_verif_rec.reviewed_at else today_str),
+            "evidence_reference": f"SFMS-TOKEN/{inst.reference_number}",
+            "findings": bank_verif_rec.findings or (
                 f"Irrevocable joint lien in favor of Member Secretary, AICTE confirmed. Token: SFMS/{inst.reference_number}"
                 if has_bank_cbs
-                else "Core banking gateway confirmation pending transmission from issuing branch host."
+                else f"Bank verification recorded outcome: {bank_verif_rec.outcome}."
             ),
-            "outstanding_issues": None if has_bank_cbs else "Awaiting CBS structured message match.",
+            "outstanding_issues": bank_verif_rec.outstanding_issues if not has_bank_cbs else None,
+            "reviewer_notes": bank_verif_rec.review_notes or "Direct bank-to-AICTE independent API verification protocol.",
+        }
+    else:
+        method_2 = {
+            "method": "Core Banking (CBS) / SFMS 2.0 Gateway",
+            "status": "NOT_AVAILABLE",
+            "source_of_evidence": f"Scheduled Bank ({inst.bank_name}) CBS API Gateway",
+            "evidence_date": None,
+            "evidence_reference": None,
+            "findings": "Official bank API verification has not been initiated for this FDR reference.",
+            "outstanding_issues": "Awaiting independent bank verification execution by Scrutiny Officer.",
             "reviewer_notes": "Direct bank-to-AICTE confirmation protocol (OCR match does not substitute for this check).",
-        },
-        {
+        }
+
+    # 3. Weekly Bank Statement Analysis
+    if latest_stmt_analysis:
+        stmt_status_val = (
+            "VERIFIED" if latest_stmt_analysis.status == "clean"
+            else "DISCREPANCY_FOUND" if latest_stmt_analysis.status == "discrepancy_flagged"
+            else "REQUIRES_MANUAL_REVIEW" if latest_stmt_analysis.status == "requires_review"
+            else latest_stmt_analysis.status.upper()
+        )
+        method_3 = {
             "method": "Weekly Bank Statement Analysis",
-            "status": (
-                "VERIFIED" if (latest_stmt_analysis and latest_stmt_analysis.status == "clean")
-                else "DISCREPANCY_FOUND" if (latest_stmt_analysis and latest_stmt_analysis.status == "discrepancy_flagged")
-                else "REQUIRES_MANUAL_REVIEW" if (latest_stmt_analysis and latest_stmt_analysis.status == "requires_review")
-                else "VERIFIED"
-            ),
+            "status": stmt_status_val,
             "source_of_evidence": (
                 f"{latest_stmt_analysis.statement.statement_source.replace('_', ' ').title()} — {latest_stmt_analysis.statement.bank_name} A/C {latest_stmt_analysis.statement.account_number}"
-                if latest_stmt_analysis and latest_stmt_analysis.statement
+                if latest_stmt_analysis.statement
                 else f"Automated Weekly Feed — {inst.bank_name} Treasury Portal"
             ),
-            "evidence_date": (
-                latest_stmt_analysis.reporting_period_end.strftime("%d %b %Y")
-                if latest_stmt_analysis
-                else today_str
-            ),
+            "evidence_date": latest_stmt_analysis.reporting_period_end.strftime("%d %b %Y"),
+            "evidence_reference": f"STMT-{latest_stmt_analysis.statement_id[:8]}" if latest_stmt_analysis.statement_id else None,
             "findings": (
                 f"Closing balance ₹ {float(latest_stmt_analysis.closing_balance):,.2f}. Reconciliation: {'PASSED' if latest_stmt_analysis.reconciliation_passed else 'FAILED'}. Net weekly delta: ₹ {float(latest_stmt_analysis.net_change):,.2f}."
-                if latest_stmt_analysis
-                else f"Deposit active with principal balance of ₹ {float(inst.amount):,.2f}. Zero unauthorized encumbrance or prior charge."
             ),
             "outstanding_issues": (
-                f"{len(latest_stmt_analysis.discrepancies)} flagged issue(s)."
-                if latest_stmt_analysis and latest_stmt_analysis.discrepancies
+                f"{len(latest_stmt_analysis.discrepancies)} flagged issue(s) detected during arithmetic reconciliation."
+                if latest_stmt_analysis.discrepancies
                 else None
             ),
             "reviewer_notes": "Continuous automated treasury reconciliation against AICTE Regulation Bureau master register.",
-        },
-        {
+        }
+    else:
+        method_3 = {
+            "method": "Weekly Bank Statement Analysis",
+            "status": "UNABLE_TO_VERIFY",
+            "source_of_evidence": "Institution Treasury Statement Feed",
+            "evidence_date": None,
+            "evidence_reference": None,
+            "findings": "No weekly bank statement uploaded or processed for this institution's reporting period.",
+            "outstanding_issues": "Weekly statement feed required to corroborate ongoing liquidity and balance reconciliation.",
+            "reviewer_notes": "Continuous automated treasury reconciliation against AICTE Regulation Bureau master register.",
+        }
+
+    # 4. Account Aggregator (RBI AA Framework)
+    if latest_aa_retrieval:
+        method_4 = {
             "method": "Account Aggregator (RBI AA Framework)",
-            "status": (
-                latest_aa_retrieval.status.upper()
-                if latest_aa_retrieval
-                else ("PENDING_CONSENT" if (latest_aa_consent and latest_aa_consent.status == "PENDING")
-                      else "NOT_AVAILABLE")
-            ),
-            "source_of_evidence": (
-                f"Sahamati / RBI FIP ({latest_aa_retrieval.fip_name}) [{latest_aa_retrieval.data_source.upper()}]"
-                if latest_aa_retrieval
-                else (f"AA Consent Handle ({latest_aa_consent.consent_handle})" if latest_aa_consent else "Sahamati Ecosystem")
-            ),
-            "evidence_date": (
-                latest_aa_retrieval.retrieved_at.strftime("%d %b %Y")
-                if latest_aa_retrieval
-                else (latest_aa_consent.created_at.strftime("%d %b %Y") if latest_aa_consent else today_str)
-            ),
+            "status": latest_aa_retrieval.status.upper(),
+            "source_of_evidence": f"Sahamati / RBI FIP ({latest_aa_retrieval.fip_name}) [{latest_aa_retrieval.data_source.upper()}]",
+            "evidence_date": latest_aa_retrieval.retrieved_at.strftime("%d %b %Y"),
+            "evidence_reference": (latest_aa_retrieval.raw_signature_info or {}).get("certSerial") or latest_aa_retrieval.id,
             "findings": (
-                (
-                    f"Real-time non-repudiable deposit status verified via AA. Term Deposit principal ₹ {float(inst.amount):,.2f} confirmed with joint lien."
-                    if latest_aa_retrieval.concordance_matched
-                    else (
-                        f"Field discrepancy flagged via AA: {', '.join([m.get('explanation', '') for m in (latest_aa_retrieval.mismatches or [])])}"
-                        if latest_aa_retrieval.mismatches
-                        else (latest_aa_retrieval.demo_notice or "Non-repudiable telemetry retrieved under consented AA artifact.")
-                    )
-                )
-                if latest_aa_retrieval
+                f"Real-time non-repudiable deposit status verified via AA. Term Deposit principal ₹ {float(inst.amount):,.2f} confirmed with joint lien."
+                if latest_aa_retrieval.concordance_matched
                 else (
-                    f"Consent handle '{latest_aa_consent.consent_handle}' pending authorization on AA application."
-                    if latest_aa_consent and latest_aa_consent.status == "PENDING"
-                    else f"Institutional AA consent not yet established for {inst.bank_name}. Secondary manual and statement corroboration active."
+                    f"Field discrepancy flagged via AA: {', '.join([m.get('explanation', '') for m in (latest_aa_retrieval.mismatches or [])])}"
+                    if latest_aa_retrieval.mismatches
+                    else (latest_aa_retrieval.demo_notice or "Non-repudiable telemetry retrieved under consented AA artifact.")
                 )
             ),
             "outstanding_issues": (
-                (
-                    f"{len(latest_aa_retrieval.mismatches)} field mismatch(es) detected via Account Aggregator."
-                    if latest_aa_retrieval.mismatches
-                    else (
-                        "Institutional consent has expired; renewal required."
-                        if latest_aa_retrieval.status == "consent_expired"
-                        else None
-                    )
+                f"{len(latest_aa_retrieval.mismatches)} field mismatch(es) detected via Account Aggregator."
+                if latest_aa_retrieval.mismatches
+                else (
+                    "Institutional consent has expired; renewal required."
+                    if latest_aa_retrieval.status == "consent_expired"
+                    else None
                 )
-                if latest_aa_retrieval
-                else ("Awaiting institutional signatory consent authorization on AA interface." if latest_aa_consent and latest_aa_consent.status == "PENDING" else "Automated AA protocol not established.")
             ),
-            "reviewer_notes": (
-                (latest_aa_retrieval.demo_notice or "Non-repudiable RSA-SHA256 signature verified against Sahamati registry.")
-                if latest_aa_retrieval
-                else "Statutory alternative: CBS gateway confirmation and weekly statement analysis active."
-            ),
-            "data_source": latest_aa_retrieval.data_source if latest_aa_retrieval else "unavailable",
-        },
-        {
-            "method": "Financial Allocation & APH Compliance",
-            "status": "VERIFIED",
-            "source_of_evidence": "AICTE Approval Process Handbook (APH) 2026-27 Norms",
-            "evidence_date": today_str,
-            "findings": f"Lien principal ₹ {float(inst.amount):,.2f} complies with 100% of statutory security deposit obligation.",
-            "outstanding_issues": None,
-            "reviewer_notes": "Lock-in tenure of 36+ months validated under Bureau guidelines.",
-        },
-    ]
+            "reviewer_notes": latest_aa_retrieval.demo_notice or "Non-repudiable RSA-SHA256 signature verified against Sahamati registry.",
+            "data_source": latest_aa_retrieval.data_source,
+        }
+    elif latest_aa_consent and latest_aa_consent.status == "PENDING":
+        method_4 = {
+            "method": "Account Aggregator (RBI AA Framework)",
+            "status": "PENDING_CONSENT",
+            "source_of_evidence": f"AA Consent Handle ({latest_aa_consent.customer_aa_handle})",
+            "evidence_date": latest_aa_consent.created_at.strftime("%d %b %Y"),
+            "evidence_reference": latest_aa_consent.consent_handle,
+            "findings": f"Consent handle '{latest_aa_consent.consent_handle}' pending authorization on AA application.",
+            "outstanding_issues": "Awaiting institutional signatory consent authorization on AA interface.",
+            "reviewer_notes": "Awaiting institutional consent approval on RBI Account Aggregator app.",
+            "data_source": "unavailable",
+        }
+    else:
+        method_4 = {
+            "method": "Account Aggregator (RBI AA Framework)",
+            "status": "NOT_AVAILABLE",
+            "source_of_evidence": f"Sahamati / RBI FIP Network ({inst.bank_name})",
+            "evidence_date": None,
+            "evidence_reference": None,
+            "findings": f"Institutional AA consent not established for {inst.bank_name}. Automated AA retrieval unavailable.",
+            "outstanding_issues": "Issuing bank or institution not onboarded on AA network.",
+            "reviewer_notes": "Statutory alternative: CBS gateway confirmation and weekly statement analysis active.",
+            "data_source": "unavailable",
+        }
+
+    # 5. Financial Allocation Decision Calculation
+    required_deposit = (
+        float(inst.institution.total_deposit_required)
+        if (inst.institution and inst.institution.total_deposit_required and float(inst.institution.total_deposit_required) > 0)
+        else float(inst.amount)
+    )
+
+    observed_eligible_amount = None
+    observed_source = "None (Independent verification pending)"
+    balance_details = None
+
+    if has_bank_cbs:
+        observed_eligible_amount = float(inst.amount)
+        observed_source = f"Official Bank Verification ({inst.bank_name} CBS Gateway)"
+        balance_details = f"Lien-marked FDR #{inst.reference_number} verified against bank records."
+    elif latest_aa_retrieval and latest_aa_retrieval.concordance_matched:
+        observed_eligible_amount = float(inst.amount)
+        observed_source = f"Account Aggregator Consented Telemetry ({latest_aa_retrieval.fip_name})"
+        balance_details = "Term Deposit principal corroboration with encumbrance verification."
+    elif latest_stmt_analysis and latest_stmt_analysis.reconciliation_passed and latest_stmt_analysis.status == "clean":
+        observed_eligible_amount = float(latest_stmt_analysis.closing_balance)
+        observed_source = f"Weekly Bank Statement ({latest_stmt_analysis.statement.bank_name if latest_stmt_analysis.statement else 'Treasury'})"
+        balance_details = f"Statement closing balance ₹ {float(latest_stmt_analysis.closing_balance):,.2f} verified."
+
+    reporting_period_str = (
+        f"{latest_stmt_analysis.reporting_period_start.strftime('%d %b %Y')} to {latest_stmt_analysis.reporting_period_end.strftime('%d %b %Y')}"
+        if latest_stmt_analysis
+        else "Current Academic Regulatory Cycle (2026-27)"
+    )
+
+    if observed_eligible_amount is not None:
+        diff_val = observed_eligible_amount - required_deposit
+        if diff_val >= 0:
+            compliance_status = "COMPLIANT"
+            allocation_issues = None
+        else:
+            compliance_status = "DEFICIT"
+            allocation_issues = f"Deficit of ₹ {abs(diff_val):,.2f} against regulatory requirement of ₹ {required_deposit:,.2f}."
+    else:
+        diff_val = None
+        compliance_status = "UNABLE_TO_VERIFY"
+        allocation_issues = "Eligible amount cannot be established from current evidence. Bank API or reconciled statement required."
+
+    allocation_decision = {
+        "required_amount": required_deposit,
+        "observed_amount": observed_eligible_amount,
+        "observed_amount_display": f"₹ {observed_eligible_amount:,.2f}" if observed_eligible_amount is not None else "Unable to Verify",
+        "source_of_observed": observed_source,
+        "reporting_period": reporting_period_str,
+        "difference": diff_val,
+        "compliance_status": compliance_status,
+        "balance_details": balance_details or "No verified balance details available.",
+        "outstanding_issues": allocation_issues,
+    }
+
+    method_5 = {
+        "method": "Financial Allocation & APH Compliance",
+        "status": "VERIFIED" if compliance_status == "COMPLIANT" else ("DISCREPANCY_FOUND" if compliance_status == "DEFICIT" else "UNABLE_TO_VERIFY"),
+        "source_of_evidence": f"AICTE APH Norms vs {observed_source}",
+        "evidence_date": today_str,
+        "evidence_reference": f"APH-2026-REG-{inst.institution.institution_code if inst.institution else 'INST'}",
+        "findings": (
+            f"Observed eligible deposit of ₹ {observed_eligible_amount:,.2f} satisfies 100% of required ₹ {required_deposit:,.2f}."
+            if compliance_status == "COMPLIANT"
+            else (
+                f"Deficit of ₹ {abs(diff_val):,.2f} observed: Required ₹ {required_deposit:,.2f} vs observed ₹ {observed_eligible_amount:,.2f}."
+                if compliance_status == "DEFICIT"
+                else f"Required allocation ₹ {required_deposit:,.2f}. Observed amount cannot be established from unverified sources."
+            )
+        ),
+        "outstanding_issues": allocation_issues,
+        "reviewer_notes": "Statutory security deposit allocation evaluated per APH Chapter I/II requirements.",
+    }
+
+    methods = [method_1, method_2, method_3, method_4, method_5]
 
     mandatory_checks = [
         {"name": "Stage 1 Technical Scrutiny Passed", "passed": tech_status == "VERIFIED"},
@@ -713,6 +811,7 @@ async def get_financial_verification_summary(
         "verification_status": inst.verification_status,
         "financial_verification_status": inst.financial_verification_status,
         "has_duplicate_reference": has_duplicate,
+        "allocation_decision": allocation_decision,
         "methods": methods,
         "mandatory_checks": mandatory_checks,
         "mandatory_checks_passed": mandatory_passed,
@@ -744,6 +843,7 @@ async def record_executive_financial_decision(
     Enforces that:
     - Only Approving Authority (or Admin) can record financial decisions (HTTP 403 for Scrutiny Officers/Institution Reps).
     - Decisions can only be finalized when mandatory checks are satisfied OR an explicitly permitted exception is recorded with justification.
+    - Rejection and Request for Clarification require mandatory reasons (minimum 10 characters).
     """
     caller_role = current_user.role if current_user else payload.authority_role
     caller_id = current_user.id if current_user else payload.authority_user_id
@@ -760,11 +860,18 @@ async def record_executive_financial_decision(
         "REJECT": "REJECTED",
         "REJECTED": "REJECTED",
         "RETURN": "RETURNED_FOR_VERIFICATION",
+        "RETURNED": "RETURNED_FOR_VERIFICATION",
+        "RETURN_FOR_VERIFICATION": "RETURNED_FOR_VERIFICATION",
         "RETURNED_FOR_VERIFICATION": "RETURNED_FOR_VERIFICATION",
+        "RETURN_FOR_CORRECTION": "RETURNED_FOR_VERIFICATION",
         "RETURNED_FOR_CORRECTION": "RETURNED_FOR_VERIFICATION",
+        "RETURN_FOR_RE_SCRUTINY": "RETURNED_FOR_VERIFICATION",
+        "REQUEST_CLARIFICATION": "REQUEST_CLARIFICATION",
+        "CLARIFICATION_REQUESTED": "REQUEST_CLARIFICATION",
+        "CLARIFICATION": "REQUEST_CLARIFICATION",
     }
     decision_norm = decision_map.get(payload.decision.upper().strip(), payload.decision.upper().strip())
-    valid_decisions = {"APPROVED", "REJECTED", "RETURNED_FOR_VERIFICATION"}
+    valid_decisions = {"APPROVED", "REJECTED", "RETURNED_FOR_VERIFICATION", "REQUEST_CLARIFICATION"}
     if decision_norm not in valid_decisions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -774,6 +881,22 @@ async def record_executive_financial_decision(
     inst = db.query(FinancialInstrument).filter(FinancialInstrument.id == payload.instrument_id).first()
     if not inst:
         raise HTTPException(status_code=404, detail="Financial instrument not found.")
+
+    notes = payload.get_notes().strip()
+
+    # Enforce mandatory reason on Rejection
+    if decision_norm == "REJECTED" and len(notes) < 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mandatory Rejection Reason: Rejecting an instrument requires a detailed statutory justification (minimum 10 characters).",
+        )
+
+    # Enforce mandatory reason on Clarification Request
+    if decision_norm == "REQUEST_CLARIFICATION" and len(notes) < 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mandatory Clarification Query: Requesting clarification requires specific query details for the institution or scrutiny officer (minimum 10 characters).",
+        )
 
     # Validate mandatory checks for approval
     if decision_norm == "APPROVED":
@@ -801,21 +924,8 @@ async def record_executive_financial_decision(
         inst.lifecycle_status = "rejected"
     elif decision_norm == "RETURNED_FOR_VERIFICATION":
         inst.financial_verification_status = "requires_manual_review"
-        inst.verification_status = "clarification_required"
-
-    inst.updated_at = now_dt
-
-    # Persist Stage 2 Verification Record
-    dec_id = f"exec-dec-{uuid.uuid4().hex[:6]}"
-    notes = payload.get_notes()
-    # Update statuses
-    if decision_norm == "APPROVED":
-        inst.financial_verification_status = "approved"
-        inst.lifecycle_status = "active"
-    elif decision_norm == "REJECTED":
-        inst.financial_verification_status = "rejected"
-        inst.lifecycle_status = "rejected"
-    elif decision_norm == "RETURNED_FOR_VERIFICATION":
+        inst.verification_status = "under_scrutiny"
+    elif decision_norm == "REQUEST_CLARIFICATION":
         inst.financial_verification_status = "requires_manual_review"
         inst.verification_status = "clarification_required"
 
@@ -881,6 +991,7 @@ async def record_executive_financial_decision(
         "message": f"Executive Financial Verification decision recorded as '{decision_norm}'.",
         "instrument_id": inst.id,
         "financial_verification_status": inst.financial_verification_status,
+        "verification_status": inst.verification_status,
         "lifecycle_status": inst.lifecycle_status,
         "recorded_at": now_dt.isoformat(),
     }
