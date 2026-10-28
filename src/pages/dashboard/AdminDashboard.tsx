@@ -17,12 +17,10 @@ import {
 } from "lucide-react";
 import { StatCard, Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
 import { Alert } from "@/components/ui/Alert";
 import { formatCurrency } from "@/utils";
 import { getPortfolioStats, CENTRAL_INSTITUTIONS } from "@/data/centralDataset";
-import { useAuth } from "@/context/AuthContext";
-import type { User, UserRole } from "@/types";
+import type { User } from "@/types";
 
 interface AdminDashboardProps {
   user: User;
@@ -30,7 +28,6 @@ interface AdminDashboardProps {
 
 export function AdminDashboard({ user }: AdminDashboardProps) {
   const stats = getPortfolioStats();
-  const { switchRole } = useAuth();
   const [dbSyncing, setDbSyncing] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
@@ -264,35 +261,42 @@ export function AdminDashboard({ user }: AdminDashboardProps) {
           </Card>
         </div>
 
-        {/* Right: Demo Role Switcher & Recent Admin Events */}
+        {/* Right: Security Governance & Recent Audit Events */}
         <div className="space-y-4">
           <Card>
-            <CardHeader className="pb-3 border-b border-slate-100">
-              <CardTitle className="text-sm font-bold text-slate-900 font-plus-jakarta flex items-center justify-between">
-                <span>Interactive Persona Switcher</span>
-                <Badge variant="warning">SIH Demo Tool</Badge>
-              </CardTitle>
-              <p className="text-xs text-slate-400">
-                Instantly simulate each stakeholder perspective for judges.
-              </p>
+            <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-sm font-bold text-slate-900 font-plus-jakarta flex items-center gap-2">
+                  <Terminal size={15} className="text-orange-600" />
+                  <span>Security Audit Telemetry</span>
+                </CardTitle>
+                <p className="text-xs text-slate-400">
+                  Live immutable event stream (DATABASE.md Section 5.13)
+                </p>
+              </div>
+              <Button size="xs" variant="outline" asChild>
+                <Link to="/audit-logs">
+                  <span>View All</span>
+                  <ArrowRight size={11} />
+                </Link>
+              </Button>
             </CardHeader>
-            <CardContent className="p-4 space-y-2.5">
+            <CardContent className="p-3 space-y-2 text-xs">
               {[
-                { role: "institution_representative" as UserRole, label: "Institution Rep", desc: "Submit deposits, respond to queries", color: "hover:bg-amber-50" },
-                { role: "scrutiny_officer" as UserRole, label: "Scrutiny Officer", desc: "Examine OCR & flag discrepancies", color: "hover:bg-blue-50" },
-                { role: "approving_authority" as UserRole, label: "Approving Authority", desc: "Member Secretary sign-off for release", color: "hover:bg-emerald-50" },
-              ].map((p, i) => (
-                <button
-                  key={i}
-                  onClick={() => switchRole(p.role)}
-                  className={`w-full p-2.5 rounded-lg border border-slate-200 text-left transition-all ${p.color} flex items-center justify-between group`}
-                >
+                { event: "USER_AUTHENTICATED", user: "anil.verma@aicte.gov.in", time: "2 mins ago", outcome: "SUCCESS" },
+                { event: "DOCUMENT_SIGNATURE_VERIFIED", user: "system-storage", time: "14 mins ago", outcome: "CLEAN" },
+                { event: "DISCREPANCY_FLAGGED", user: "ocr-pipeline-v2.1", time: "38 mins ago", outcome: "FLAGGED" },
+                { event: "RBAC_ROLE_VALIDATED", user: "priya.nair@aicte.gov.in", time: "1 hour ago", outcome: "ENFORCED" },
+              ].map((ev, i) => (
+                <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-100 text-[11px]">
                   <div>
-                    <p className="text-xs font-bold text-slate-900">{p.label}</p>
-                    <p className="text-[10px] text-slate-500">{p.desc}</p>
+                    <p className="font-mono font-bold text-slate-800">{ev.event}</p>
+                    <p className="text-[10px] text-slate-400 font-sans">{ev.user} · {ev.time}</p>
                   </div>
-                  <RefreshCw size={13} className="text-slate-400 group-hover:text-orange-600 transition-colors" />
-                </button>
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    {ev.outcome}
+                  </span>
+                </div>
               ))}
             </CardContent>
           </Card>

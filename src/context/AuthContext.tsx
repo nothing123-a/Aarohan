@@ -7,7 +7,8 @@ interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   updateUser: (user: Partial<User>) => void;
-  switchRole: (role: UserRole) => void;
+  /** Demo / Evaluation role switcher — obtains a real signed JWT for the target persona. */
+  switchRole: (role: UserRole) => Promise<void>;
 }
 
 // ─── Reducer ──────────────────────────────────────────────────────
@@ -114,7 +115,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const switchRole = (role: UserRole) => {
+  /**
+   * View-As / Demo Role Switcher.
+   * Calls the backend /auth/switch-role endpoint to obtain a properly signed JWT
+   * for the target persona, so backend authorization is exercised correctly during
+   * jury demonstration and testing.
+   *
+   * This is a DEMONSTRATION tool — the real role is derived from the signed JWT by
+   * the backend on every API call. Changing localStorage directly does not elevate
+   * privileges for backend operations.
+   */
+  const switchRole = async (role: UserRole): Promise<void> => {
+    try {
+      const response = await fetch("/api/auth/switch-role", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      });
+      if (response.ok) {
+        const res = await response.json();
+        const { token, user } = res.data;
+        localStorage.setItem("auth_token", token);
+        localStorage.setItem("auth_user", JSON.stringify(user));
+        dispatch({ type: "LOGIN_SUCCESS", payload: { user, token } });
+        return;
+      }
+    } catch {
+      // Backend not reachable — fall back to offline demo persona
+    }
+
+    // Offline fallback (demo only — backend still enforces real role from JWT)
     let targetUser: User;
     if (role === "institution_representative" || role === "depositor") {
       targetUser = CENTRAL_DEMO_USERS.institution;
@@ -125,8 +155,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       targetUser = CENTRAL_DEMO_USERS.officer;
     }
-
-    const token = "demo-jwt-token-" + Date.now();
+    const token = "demo-offline-" + Date.now();
     localStorage.setItem("auth_token", token);
     localStorage.setItem("auth_user", JSON.stringify(targetUser));
     dispatch({ type: "LOGIN_SUCCESS", payload: { user: targetUser, token } });

@@ -59,49 +59,51 @@ export function Dialog({
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dialog-title"
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in"
+        className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in"
         onClick={persistent ? undefined : onClose}
       />
 
       {/* Panel */}
       <div
         className={cn(
-          "relative w-full bg-white rounded-xl shadow-xl border border-slate-200 animate-scale-in",
+          "relative w-full bg-white rounded-xl shadow-2xl border border-slate-200 animate-scale-in flex flex-col max-h-[85vh] sm:max-h-[88vh] my-auto",
           SIZE_MAP[size]
         )}
       >
-        {/* Header */}
-        <div className="flex items-start justify-between p-6 border-b border-slate-100">
+        {/* Header — fixed, does not scroll */}
+        <div className="flex items-start justify-between px-6 py-3 border-b border-slate-100 flex-shrink-0 bg-white rounded-t-xl">
           <div>
             <h2 id="dialog-title" className="text-base font-semibold text-slate-900">
               {title}
             </h2>
             {description && (
-              <p className="text-sm text-slate-500 mt-0.5">{description}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{description}</p>
             )}
           </div>
           <button
             onClick={onClose}
-            className="ml-4 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            className="ml-4 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors flex-shrink-0"
             aria-label="Close dialog"
           >
             <X size={18} />
           </button>
         </div>
 
-        {/* Body */}
-        <div className="p-6">{children}</div>
+        {/* Body — scrollable so tall forms never overflow the viewport */}
+        <div className="px-6 py-3.5 overflow-y-auto flex-1 min-h-0 focus:outline-none scrollbar-thin scrollbar-thumb-slate-300">
+          {children}
+        </div>
 
-        {/* Footer */}
+        {/* Footer — fixed, does not scroll */}
         {footer && (
-          <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
+          <div className="px-6 py-3 border-t border-slate-100 bg-slate-50/90 rounded-b-xl flex items-center justify-end gap-3 flex-shrink-0">
             {footer}
           </div>
         )}

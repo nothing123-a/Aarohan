@@ -8,6 +8,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/fdr/new": "Submit New FDR",
   "/verification": "Document & Lien Verification",
   "/alerts": "Maturity & Expiry Alerts",
+  "/monitoring": "Maturity Timeline & Monitoring Register",
+  "/notifications": "Observation & System Notifications",
   "/renewals": "Renewal & Replacement Management",
   "/release-requests": "Release & Refund Requests",
   "/reports": "Reports & Financial Analytics",

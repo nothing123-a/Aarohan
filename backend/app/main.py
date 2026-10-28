@@ -9,6 +9,7 @@ import logging
 
 from app.core.config import settings
 from app.core.database import Base, engine
+from sqlalchemy import inspect, text
 from app.api.v1.documents import router as documents_router
 from app.api.v1.verification import router as verification_router
 from app.modules.scrutiny.router import router as scrutiny_router
@@ -20,12 +21,38 @@ from app.modules.institutions.router import router as institutions_router
 from app.modules.instruments.router import router as instruments_router
 from app.modules.reports.router import router as reports_router
 from app.modules.monitoring.router import router as monitoring_router
+from app.modules.statement_analysis.router import router as statements_router
+from app.modules.account_aggregator.router import router as account_aggregator_router
 
 logger = logging.getLogger("uvicorn.error")
 
 # Ensure all 13 core database tables exist
 try:
     Base.metadata.create_all(bind=engine)
+    # Add backward-compatible schema columns if missing
+    insp = inspect(engine)
+    if "financial_instruments" in insp.get_table_names():
+        fi_cols = [c["name"] for c in insp.get_columns("financial_instruments")]
+        with engine.connect() as conn:
+            if "financial_verification_status" not in fi_cols:
+                conn.execute(text("ALTER TABLE financial_instruments ADD COLUMN financial_verification_status VARCHAR(40) DEFAULT 'pending'"))
+                conn.commit()
+    if "instrument_verifications" in insp.get_table_names():
+        iv_cols = [c["name"] for c in insp.get_columns("instrument_verifications")]
+        with engine.connect() as conn:
+            for col_name, col_def in [
+                ("stage", "VARCHAR(50) DEFAULT 'technical_scrutiny'"),
+                ("verification_method", "VARCHAR(50) DEFAULT 'document_scrutiny'"),
+                ("source_of_evidence", "VARCHAR(255)"),
+                ("evidence_date", "DATETIME"),
+                ("findings", "TEXT"),
+                ("outstanding_issues", "TEXT"),
+                ("exception_permitted", "BOOLEAN DEFAULT 0"),
+                ("exception_reason", "TEXT"),
+            ]:
+                if col_name not in iv_cols:
+                    conn.execute(text(f"ALTER TABLE instrument_verifications ADD COLUMN {col_name} {col_def}"))
+            conn.commit()
     logger.info("Database schema verified and synchronized.")
 except Exception as e:
     logger.error(f"Error initializing database tables: {e}")
@@ -66,6 +93,8 @@ app.include_router(releases_router, prefix=settings.API_V1_PREFIX)
 app.include_router(audit_router, prefix=settings.API_V1_PREFIX)
 app.include_router(reports_router, prefix=settings.API_V1_PREFIX)
 app.include_router(monitoring_router, prefix=settings.API_V1_PREFIX)
+app.include_router(statements_router, prefix=settings.API_V1_PREFIX)
+app.include_router(account_aggregator_router, prefix=settings.API_V1_PREFIX)
 
 # Also mount under /api prefix for standard frontend service calls
 app.include_router(auth_router, prefix="/api")
@@ -79,6 +108,8 @@ app.include_router(releases_router, prefix="/api")
 app.include_router(audit_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(monitoring_router, prefix="/api")
+app.include_router(statements_router, prefix="/api")
+app.include_router(account_aggregator_router, prefix="/api")
 
 @app.get("/api/v1/health")
 @app.get("/health")

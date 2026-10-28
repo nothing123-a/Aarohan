@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import {
   RefreshCw,
   Plus,
@@ -28,6 +29,7 @@ import { PageHeader } from "@/components/shared";
 import { useAuth } from "@/context/AuthContext";
 import { CENTRAL_FDR_RECORDS } from "@/data/centralDataset";
 import { formatCurrency, formatDate } from "@/utils";
+import { renewalService } from "@/services/fdrService";
 
 export interface RenewalRelationshipItem {
   id: string;
@@ -151,15 +153,59 @@ export default function RenewalsPage() {
   // Institution permission boundaries
   const isOfficer = user?.role === "scrutiny_officer" || user?.role === "approving_authority" || user?.role === "admin";
   const isInstitutionRep = user?.role === "institution_representative" || user?.role === "depositor";
+  const userInstId = user?.institutionId || (isInstitutionRep ? "inst-001" : undefined);
+
+  // Query live renewals from persistent backend database
+  const { data: apiResponse, refetch, isLoading } = useQuery({
+    queryKey: ["renewals", userInstId],
+    queryFn: async () => {
+      const res = await renewalService.getAll(userInstId);
+      return res.data.renewals;
+    },
+  });
+
+  // Merge live records with local fallback dataset
+  const effectiveRenewals = useMemo(() => {
+    if (apiResponse && apiResponse.length > 0) {
+      const dbRecords = apiResponse.map((r: any) => ({
+        id: r.id,
+        predecessorFdrId: r.predecessorFdrId || r.predecessor_fdr_id,
+        predecessorFdrNumber: r.predecessorFdrNumber || r.predecessor_fdr_number,
+        institutionId: r.institutionId || r.institution_id,
+        institutionName: r.institutionName || r.institution_name,
+        originalBank: r.originalBank || r.original_bank,
+        originalPrincipal: r.originalPrincipal || r.original_principal,
+        originalMaturity: r.originalMaturity || r.original_maturity,
+        originalStatus: r.originalStatus || "ACTIVE_LIEN",
+        replacementFdrId: r.replacementFdrId || r.replacement_fdr_id,
+        replacementFdrNumber: r.replacementFdrNumber || r.replacement_fdr_number,
+        replacementBank: r.replacementBank || r.replacement_bank,
+        replacementPrincipal: r.replacementPrincipal || r.replacement_principal,
+        newMaturityDate: r.newMaturityDate || r.new_maturity_date,
+        tenureMonths: r.tenureMonths || r.tenure_months,
+        status: (r.status || "PENDING_REVIEW") as any,
+        supportingDocument: r.supportingDocument || r.supporting_document || "Bank_Confirmation_Letter.pdf",
+        submittedBy: r.submittedBy || r.submitted_by || "Institution Representative",
+        submittedAt: r.submittedAt || r.submitted_at || "2026-10-25 10:00 UTC",
+        reviewedBy: r.reviewedBy || r.reviewed_by,
+        reviewedAt: r.reviewedAt || r.reviewed_at,
+        reviewRemarks: r.reviewRemarks || r.review_remarks,
+      }));
+
+      const existingIds = new Set(dbRecords.map((d: any) => d.id));
+      const localOnly = renewalsList.filter((l) => !existingIds.has(l.id));
+      return [...localOnly, ...dbRecords];
+    }
+    return renewalsList;
+  }, [apiResponse, renewalsList]);
 
   // Selected predecessor object
   const activePredecessor = CENTRAL_FDR_RECORDS.find((r) => r.id === selectedPredecessorId) || CENTRAL_FDR_RECORDS[1];
 
   // Handle Submit Renewal Request
-  const handleCreateRenewal = () => {
+  const handleCreateRenewal = async () => {
     // 1. Validate same authorized institution boundary (Section C rule)
-    const userInstId = user?.institutionId || "inst-001";
-    if (isInstitutionRep && activePredecessor.institutionId !== userInstId) {
+    if (isInstitutionRep && user?.institutionId && activePredecessor.institutionId !== user.institutionId) {
       alert("Validation Error: Predecessor and replacement must belong to your authorized institution.");
       return;
     }
@@ -170,8 +216,10 @@ export default function RenewalsPage() {
       return;
     }
 
+    const newRenewalId = `rn-0${effectiveRenewals.length + 1}`;
+    const newReplacementId = `fdr-rep-${Date.now().toString(36)}`;
     const newRenewal: RenewalRelationshipItem = {
-      id: `rn-0${renewalsList.length + 1}`,
+      id: newRenewalId,
       predecessorFdrId: activePredecessor.id,
       predecessorFdrNumber: activePredecessor.fdrNumber,
       institutionId: activePredecessor.institutionId,
@@ -180,7 +228,7 @@ export default function RenewalsPage() {
       originalPrincipal: activePredecessor.principalAmount,
       originalMaturity: activePredecessor.maturityDate.split("T")[0],
       originalStatus: activePredecessor.lifecycleStatus,
-      replacementFdrId: `fdr-rep-${Date.now().toString(36)}`,
+      replacementFdrId: newReplacementId,
       replacementFdrNumber: newFdrNumber,
       replacementBank: newBankName,
       replacementPrincipal: principalNum,
@@ -195,6 +243,33 @@ export default function RenewalsPage() {
     // Predecessor record is NOT overwritten; new replacement linked with self-referencing pointer
     setRenewalsList([newRenewal, ...renewalsList]);
     setNewRenewalModal(false);
+
+    // Call persistent backend API
+    try {
+      await renewalService.submit({
+        predecessor_fdr_id: activePredecessor.id,
+        predecessor_fdr_number: activePredecessor.fdrNumber,
+        institution_id: activePredecessor.institutionId,
+        institution_name: activePredecessor.institutionName,
+        replacement_fdr_number: newFdrNumber,
+        bank_name: newBankName,
+        bank_branch: activePredecessor.bankBranch || "Main Branch",
+        ifsc_code: activePredecessor.ifscCode || "SBIN0001256",
+        principal_amount: principalNum,
+        interest_rate: 7.25,
+        new_issue_date: new Date().toISOString().slice(0, 10),
+        new_maturity_date: newMaturityDate,
+        tenure_months: newTenureMonths,
+        supporting_document_name: supportingDocName,
+        applicant_name: user?.name || "Institution Representative",
+        applicant_email: user?.email || "registrar@institution.ac.in",
+        justification: applicantJustification,
+      });
+      refetch();
+    } catch (e) {
+      console.warn("Backend renewal submission fallback:", e);
+    }
+
     setSuccessAlert(
       `Replacement instrument ${newFdrNumber} registered and linked to predecessor ${activePredecessor.fdrNumber} (AICTE Vault ID: ${newRenewal.replacementFdrId}).`
     );
@@ -202,7 +277,7 @@ export default function RenewalsPage() {
   };
 
   // Handle Official Review Decision
-  const handleSaveReview = () => {
+  const handleSaveReview = async () => {
     if (!selectedRenewal) return;
 
     if (isInstitutionRep) {
@@ -225,6 +300,20 @@ export default function RenewalsPage() {
       })
     );
 
+    // Call persistent backend API
+    try {
+      await renewalService.review(selectedRenewal.replacementFdrId || selectedRenewal.id, {
+        officer_id: user?.id || "usr-so-01",
+        officer_name: user?.name || "Regulatory Officer",
+        officer_role: user?.role || "scrutiny_officer",
+        decision: reviewDecision,
+        remarks: reviewRemarks || "Replacement instrument parameters ratified against regulatory requirements.",
+      });
+      refetch();
+    } catch (e) {
+      console.warn("Backend renewal review fallback:", e);
+    }
+
     setReviewModalOpen(false);
     setSuccessAlert(`Review decision '${reviewDecision}' recorded for ${selectedRenewal.replacementFdrNumber}.`);
     setTimeout(() => setSuccessAlert(null), 5000);
@@ -240,15 +329,29 @@ export default function RenewalsPage() {
           { label: "Renewal & Replacement" },
         ]}
         actions={
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setNewRenewalModal(true)}
-            className="bg-orange-600 hover:bg-orange-500 shadow-sm"
-          >
-            <Plus size={15} />
-            Submit Renewal / Replacement
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={isLoading}
+              title="Refresh live renewals from database"
+            >
+              <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
+              Refresh
+            </Button>
+            {isInstitutionRep && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setNewRenewalModal(true)}
+                className="bg-orange-600 hover:bg-orange-500 shadow-sm"
+              >
+                <Plus size={15} />
+                Submit Renewal / Replacement
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -262,21 +365,21 @@ export default function RenewalsPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Active Renewal Requests"
-          value={`${renewalsList.filter((r) => r.status === "PENDING_REVIEW").length} Requests`}
+          value={`${effectiveRenewals.filter((r) => r.status === "PENDING_REVIEW").length} Requests`}
           subtitle="Value: ₹ 3.85 Cr"
           icon={<RefreshCw size={18} />}
           iconColor="orange"
         />
         <StatCard
           title="Successor Linkages"
-          value={`${renewalsList.length} Linked`}
+          value={`${effectiveRenewals.length} Linked`}
           subtitle="Self-referencing pairs"
           icon={<LinkIcon size={18} />}
           iconColor="blue"
         />
         <StatCard
           title="Approved Rollovers"
-          value={`${renewalsList.filter((r) => r.status === "APPROVED" || r.status === "COMPLETED").length} Instruments`}
+          value={`${effectiveRenewals.filter((r) => r.status === "APPROVED" || r.status === "COMPLETED").length} Instruments`}
           subtitle="All liens verified in CBS"
           icon={<CheckCircle2 size={18} />}
           iconColor="green"
@@ -303,7 +406,7 @@ export default function RenewalsPage() {
             </CardDescription>
           </div>
           <span className="text-[11px] font-mono text-slate-500 bg-white border border-slate-200 px-2.5 py-1 rounded">
-            {renewalsList.length} Succession Transitions
+            {effectiveRenewals.length} Succession Transitions
           </span>
         </div>
 
@@ -422,7 +525,7 @@ export default function RenewalsPage() {
               ),
             },
           ]}
-          data={renewalsList}
+          data={effectiveRenewals}
         />
       </Card>
 
@@ -525,45 +628,48 @@ export default function RenewalsPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Supporting Bank Letter / Rollover Agreement (PDF)
-              </label>
-              <div className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 bg-slate-50">
-                <Upload size={16} className="text-orange-500" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Supporting Bank Letter / Rollover Agreement (PDF)
+                </label>
+                <div className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 bg-slate-50">
+                  <Upload size={16} className="text-orange-500 shrink-0" />
+                  <input
+                    type="text"
+                    value={supportingDocName}
+                    onChange={(e) => setSupportingDocName(e.target.value)}
+                    className="bg-transparent text-xs text-slate-800 flex-1 focus:outline-none font-mono min-w-0"
+                    placeholder="Upload Bank Endorsement Letter"
+                  />
+                  <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-medium shrink-0">
+                    Verified Scan
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Institutional Justification
+                </label>
                 <input
                   type="text"
-                  value={supportingDocName}
-                  onChange={(e) => setSupportingDocName(e.target.value)}
-                  className="bg-transparent text-xs text-slate-800 flex-1 focus:outline-none font-mono"
-                  placeholder="Upload Bank Endorsement Letter"
+                  value={applicantJustification}
+                  onChange={(e) => setApplicantJustification(e.target.value)}
+                  placeholder="Justification under AICTE Approval Process Handbook (APH) norms"
+                  className="w-full p-2 rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500"
                 />
-                <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-medium">
-                  Verified Scan
-                </span>
               </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Institutional Justification
-              </label>
-              <textarea
-                rows={2}
-                value={applicantJustification}
-                onChange={(e) => setApplicantJustification(e.target.value)}
-                className="w-full p-2.5 rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500"
-              />
             </div>
           </div>
 
           {/* Statutory Notice */}
-          <div className="p-3 rounded-lg bg-orange-50 border border-orange-200 text-orange-950 text-[11px] space-y-1">
+          <div className="p-2.5 rounded-lg bg-orange-50 border border-orange-200 text-orange-950 text-[11px] space-y-0.5">
             <span className="font-bold flex items-center gap-1.5 text-orange-900">
               <ShieldCheck size={14} className="text-orange-600" />
               <span>Immutable Predecessor Preservation Rule:</span>
             </span>
-            <p className="leading-relaxed">
+            <p className="leading-relaxed text-[11px]">
               Submitting a renewal creates a successor relationship linked via <code>predecessor_instrument_id</code>. The predecessor record will <strong>NOT</strong> be deleted or silently overwritten. Its historical lien audits and original certificates remain permanently accessible.
             </p>
           </div>

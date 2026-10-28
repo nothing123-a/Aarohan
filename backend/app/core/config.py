@@ -4,6 +4,7 @@ Defines settings, security constraints, and document storage paths according to 
 """
 import os
 from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -21,12 +22,14 @@ class Settings(BaseModel):
         "image/jpeg",
         "image/png",
         "image/tiff",
+        "text/csv",
+        "text/plain",
     ]
     
     # Database configuration per ARCHITECTURE.md and DATABASE.md
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+psycopg2://postgres:postgres@localhost:5432/fdr_smart"
+        "sqlite:///./fdr_smart.db"
     )
 
     # JWT Authentication settings
@@ -40,6 +43,15 @@ class Settings(BaseModel):
 
     # CORS
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+    # Account Aggregator (AA) Integration Settings (RBI / Sahamati ReBIT Spec)
+    AA_ENABLED: bool = os.getenv("AA_ENABLED", "false").lower() in ("true", "1", "yes")
+    AA_ENVIRONMENT: str = os.getenv("AA_ENVIRONMENT", "demonstration")  # "production", "sandbox", "demonstration"
+    AA_CLIENT_ID: Optional[str] = os.getenv("AA_CLIENT_ID", None)
+    AA_CLIENT_SECRET: Optional[str] = os.getenv("AA_CLIENT_SECRET", None)
+    AA_FIU_ID: str = os.getenv("AA_FIU_ID", "fiu@aicte-india.org")
+    AA_GATEWAY_URL: Optional[str] = os.getenv("AA_GATEWAY_URL", None)
+    AA_WEBHOOK_SECRET: Optional[str] = os.getenv("AA_WEBHOOK_SECRET", None)
 
 settings = Settings()
 

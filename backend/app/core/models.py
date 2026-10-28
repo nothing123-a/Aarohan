@@ -28,6 +28,7 @@ from sqlalchemy import (
     ForeignKey,
     JSON,
     Integer,
+    Boolean,
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -138,7 +139,8 @@ class FinancialInstrument(Base):
     project_name = Column(String(255), nullable=True)
     department = Column(String(100), nullable=True)
     submission_status = Column(String(30), nullable=False, default="draft")  # draft, submitted, returned_for_correction, resubmitted
-    verification_status = Column(String(30), nullable=False, default="not_started")  # not_started, pending, in_review, verified, discrepancy_found, rejected
+    verification_status = Column(String(30), nullable=False, default="not_started")  # not_started, pending, under_scrutiny, in_review, verified, discrepancy_found, clarification_required, unable_to_verify, rejected
+    financial_verification_status = Column(String(40), nullable=False, default="pending")  # pending, verified, discrepancy_found, unable_to_verify, not_available, requires_manual_review, approved, rejected
     lifecycle_status = Column(String(30), nullable=False, default="active")  # active, matured, renewal_pending, replacement_pending, released, closed
     predecessor_instrument_id = Column(String(36), ForeignKey("financial_instruments.id"), nullable=True)
     submitted_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
@@ -216,7 +218,15 @@ class InstrumentVerification(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     instrument_id = Column(String(36), ForeignKey("financial_instruments.id"), nullable=False, index=True)
     reviewed_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
-    outcome = Column(String(30), nullable=False)  # verified, discrepancy_found, returned_for_correction, rejected
+    outcome = Column(String(30), nullable=False)  # verified, discrepancy_found, clarification_required, unable_to_verify, returned_for_correction, rejected
+    stage = Column(String(50), nullable=False, default="technical_scrutiny")  # technical_scrutiny, executive_financial
+    verification_method = Column(String(50), nullable=True, default="document_scrutiny")  # document_scrutiny, bank_sfms, weekly_statement, account_aggregator, financial_allocation
+    source_of_evidence = Column(String(255), nullable=True)
+    evidence_date = Column(DateTime(timezone=True), nullable=True)
+    findings = Column(Text, nullable=True)
+    outstanding_issues = Column(Text, nullable=True)
+    exception_permitted = Column(Boolean, nullable=True, default=False)
+    exception_reason = Column(Text, nullable=True)
     review_notes = Column(Text, nullable=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -353,3 +363,247 @@ class AuditEvent(Base):
     correlation_id = Column(String(100), nullable=True)
     details = Column(JSON, nullable=True)
     occurred_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+# ===========================================================================
+# Weekly Bank Statement Analyzer Models
+# ===========================================================================
+
+class BankStatement(Base):
+    """
+    Stores metadata, source, and private storage references for uploaded bank statements.
+    Supports weekly and periodic financial monitoring.
+    """
+    __tablename__ = "bank_statements"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    institution_id = Column(String(36), ForeignKey("institutions.id"), nullable=False, index=True)
+    bank_name = Column(String(255), nullable=False)
+    account_number = Column(String(100), nullable=False, index=True)
+    reference_number = Column(String(100), nullable=True)  # Optional deposit/facility ref
+    statement_source = Column(String(50), nullable=False, default="direct_upload")  # direct_upload, bank_portal_feed, authorized_email_feed, treasury_portal
+    reporting_period_start = Column(Date, nullable=False, index=True)
+    reporting_period_end = Column(Date, nullable=False, index=True)
+    submission_date = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    original_filename = Column(String(255), nullable=False)
+    storage_key = Column(String(512), nullable=False, unique=True)
+    mime_type = Column(String(100), nullable=False)
+    file_size_bytes = Column(BigInteger, nullable=False)
+    sha256_checksum = Column(String(64), nullable=False)
+    uploaded_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    status = Column(String(30), nullable=False, default="uploaded")  # uploaded, processing, extracted, reconciled, discrepancy_flagged, requires_review, failed
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    institution = relationship("Institution", foreign_keys=[institution_id])
+    uploaded_by_user = relationship("User", foreign_keys=[uploaded_by_user_id])
+    extraction = relationship("StatementExtraction", back_populates="statement", uselist=False, cascade="all, delete-orphan")
+    analysis = relationship("StatementAnalysis", back_populates="statement", uselist=False, cascade="all, delete-orphan")
+    transactions = relationship("StatementTransaction", back_populates="statement", cascade="all, delete-orphan")
+    alerts = relationship("FinancialAlert", back_populates="statement", cascade="all, delete-orphan")
+
+
+class StatementExtraction(Base):
+    """
+    Extracted fields and summary figures from a bank statement (PDF/CSV).
+    """
+    __tablename__ = "statement_extractions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    statement_id = Column(String(36), ForeignKey("bank_statements.id"), nullable=False, unique=True, index=True)
+    account_holder_name = Column(String(255), nullable=True)
+    bank_name = Column(String(255), nullable=True)
+    account_number = Column(String(100), nullable=True)
+    statement_period_start = Column(Date, nullable=True)
+    statement_period_end = Column(Date, nullable=True)
+    opening_balance = Column(Numeric(18, 2), nullable=True)
+    closing_balance = Column(Numeric(18, 2), nullable=True)
+    total_credits = Column(Numeric(18, 2), nullable=True, default=0.0)
+    total_debits = Column(Numeric(18, 2), nullable=True, default=0.0)
+    transaction_count = Column(Integer, nullable=False, default=0)
+    missing_fields = Column(JSON, nullable=True)  # List of un-extracted/uncertain field names
+    confidence_score = Column(Numeric(5, 2), nullable=True, default=100.0)
+    raw_metadata = Column(JSON, nullable=True)
+    extracted_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    # Relationships
+    statement = relationship("BankStatement", back_populates="extraction")
+
+
+class StatementTransaction(Base):
+    """
+    Individual parsed transactions from a bank statement.
+    """
+    __tablename__ = "statement_transactions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    statement_id = Column(String(36), ForeignKey("bank_statements.id"), nullable=False, index=True)
+    transaction_date = Column(Date, nullable=False)
+    description = Column(Text, nullable=False)
+    reference_number = Column(String(100), nullable=True)
+    credit_amount = Column(Numeric(18, 2), nullable=True, default=0.0)
+    debit_amount = Column(Numeric(18, 2), nullable=True, default=0.0)
+    running_balance = Column(Numeric(18, 2), nullable=True)
+    transaction_type = Column(String(30), nullable=False, default="debit")  # credit, debit, interest, fee, transfer, reversal
+    is_suspicious = Column(Boolean, nullable=False, default=False)
+    flag_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    # Relationships
+    statement = relationship("BankStatement", back_populates="transactions")
+
+
+class StatementAnalysis(Base):
+    """
+    Consolidated weekly statement analysis:
+    - Arithmetic reconciliation (opening + credits - debits == closing)
+    - Fund allocation compliance against configured statutory requirements
+    - Unexplained large withdrawal detection
+    - Continuity comparison against prior periods
+    - Reviewer decisions
+    """
+    __tablename__ = "statement_analyses"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    statement_id = Column(String(36), ForeignKey("bank_statements.id"), nullable=False, unique=True, index=True)
+    institution_id = Column(String(36), ForeignKey("institutions.id"), nullable=False, index=True)
+    reporting_period_start = Column(Date, nullable=False)
+    reporting_period_end = Column(Date, nullable=False)
+    opening_balance = Column(Numeric(18, 2), nullable=False)
+    closing_balance = Column(Numeric(18, 2), nullable=False)
+    net_change = Column(Numeric(18, 2), nullable=False, default=0.0)
+    net_change_percentage = Column(Numeric(6, 2), nullable=True, default=0.0)
+    reconciliation_passed = Column(Boolean, nullable=False, default=True)
+    reconciliation_variance = Column(Numeric(18, 2), nullable=False, default=0.0)
+    required_minimum_balance = Column(Numeric(18, 2), nullable=False, default=0.0)
+    balance_meets_requirement = Column(Boolean, nullable=False, default=True)
+    unexplained_withdrawals_detected = Column(Boolean, nullable=False, default=False)
+    unexplained_withdrawals_count = Column(Integer, nullable=False, default=0)
+    unexplained_withdrawals_total = Column(Numeric(18, 2), nullable=False, default=0.0)
+    prior_period_statement_id = Column(String(36), nullable=True)
+    period_continuity_status = Column(String(30), nullable=False, default="initial_period")  # continuous, gap_detected, overlap_detected, initial_period
+    status = Column(String(30), nullable=False, default="clean")  # clean, discrepancy_flagged, requires_review, reconciled, rejected
+    discrepancies = Column(JSON, nullable=True)  # List of detected discrepancies
+    reviewer_decision = Column(String(30), nullable=True)  # APPROVED, QUERY_RAISED, REJECTED, EXCEPTION_NOTED
+    reviewer_notes = Column(Text, nullable=True)
+    reviewed_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    statement = relationship("BankStatement", back_populates="analysis")
+    institution = relationship("Institution", foreign_keys=[institution_id])
+    reviewed_by_user = relationship("User", foreign_keys=[reviewed_by_user_id])
+
+
+class FinancialAlert(Base):
+    """
+    Automated financial alerts generated from statement analysis,
+    period gaps, balance drops, or allocation noncompliance.
+    """
+    __tablename__ = "financial_alerts"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    institution_id = Column(String(36), ForeignKey("institutions.id"), nullable=False, index=True)
+    statement_id = Column(String(36), ForeignKey("bank_statements.id"), nullable=True, index=True)
+    alert_type = Column(String(50), nullable=False)  # MISSING_WEEKLY_STATEMENT, BALANCE_BELOW_REQUIREMENT, UNEXPECTED_WITHDRAWAL, RECONCILIATION_FAILURE, UNRESOLVED_DISCREPANCY, STATEMENT_PROCESSING_FAILURE, MATERIAL_BALANCE_DROP
+    severity = Column(String(20), nullable=False, default="WARNING")  # CRITICAL, WARNING, INFO
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="OPEN")  # OPEN, ACKNOWLEDGED, RESOLVED, DISMISSED
+    resolution_notes = Column(Text, nullable=True)
+    resolved_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    # Relationships
+    statement = relationship("BankStatement", back_populates="alerts")
+    institution = relationship("Institution", foreign_keys=[institution_id])
+    resolved_by_user = relationship("User", foreign_keys=[resolved_by_user_id])
+
+
+# ---------------------------------------------------------------------------
+# Account Aggregator (AA) Models (RBI NBFC-AA / Sahamati Standard)
+# ---------------------------------------------------------------------------
+
+class AccountAggregatorConsent(Base):
+    """
+    Persists institutional digital consent requests and approved artifacts
+    under India's Account Aggregator ecosystem.
+    Never stores bank credentials, PINs, or OTPs.
+    """
+    __tablename__ = "account_aggregator_consents"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    institution_id = Column(String(36), ForeignKey("institutions.id"), nullable=False, index=True)
+    fip_id = Column(String(50), nullable=False)           # e.g. "fip@sbi.aa", "fip@canarabank.aa"
+    fip_name = Column(String(100), nullable=False)        # "State Bank of India", "Canara Bank"
+    customer_aa_handle = Column(String(100), nullable=False) # e.g. "dtu.reg@sahamati-aa"
+    consent_handle = Column(String(100), nullable=False, unique=True, index=True)
+    consent_id = Column(String(100), nullable=True, unique=True, index=True)  # Populated once approved
+    
+    # Status: PENDING, ACTIVE, REJECTED, REVOKED, EXPIRED
+    status = Column(String(30), nullable=False, default="PENDING", index=True)
+    
+    consent_mode = Column(String(20), nullable=False, default="QUERY")  # VIEW, QUERY, STORE
+    fetch_type = Column(String(20), nullable=False, default="ONETIME")   # ONETIME, PERIODIC
+    data_categories = Column(JSON, nullable=False)                       # e.g. ["DEPOSIT", "TERM_DEPOSIT"]
+    purpose_code = Column(String(20), nullable=False, default="101")     # 101: Regulatory Compliance & Deposit Audit
+    purpose_description = Column(String(255), nullable=False, default="AICTE APH Security Deposit & Regulatory Lien Verification")
+    
+    consent_start_date = Column(DateTime(timezone=True), nullable=False)
+    consent_expiry_date = Column(DateTime(timezone=True), nullable=False)
+    
+    redirect_url = Column(String(500), nullable=True)     # Regulated AA hosted authorization page
+    created_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    authorized_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    institution = relationship("Institution", foreign_keys=[institution_id])
+    created_by_user = relationship("User", foreign_keys=[created_by_user_id])
+    retrievals = relationship("AccountAggregatorRetrieval", back_populates="consent", cascade="all, delete-orphan")
+
+
+class AccountAggregatorRetrieval(Base):
+    """
+    Cryptographic non-repudiable financial data retrieval records retrieved
+    via the Account Aggregator network from an authorized FIP.
+    """
+    __tablename__ = "account_aggregator_retrievals"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    consent_id = Column(String(36), ForeignKey("account_aggregator_consents.id"), nullable=False, index=True)
+    instrument_id = Column(String(36), ForeignKey("financial_instruments.id"), nullable=True, index=True)
+    institution_id = Column(String(36), ForeignKey("institutions.id"), nullable=False, index=True)
+    
+    fip_name = Column(String(100), nullable=False)
+    # data_source: "live_aa" | "demonstration" | "unavailable"
+    data_source = Column(String(30), nullable=False, default="demonstration")
+    # status: "verified" | "field_mismatch" | "pending_consent" | "consent_expired" | "fip_unsupported" | "service_unavailable"
+    status = Column(String(30), nullable=False, default="verified")
+    
+    # Concordance comparison
+    concordance_matched = Column(Boolean, nullable=False, default=False)
+    
+    # Extracted Term Deposit payload & field details (ReBIT TERM_DEPOSIT schema)
+    retrieved_data = Column(JSON, nullable=True)
+    mismatches = Column(JSON, nullable=True)           # List of field mismatch dicts
+    unsupported_fields = Column(JSON, nullable=True)   # Fields not exposed by FIP
+    
+    # Cryptographic provenance
+    raw_signature_info = Column(JSON, nullable=True)   # Algorithm, certificate serial, digest, timestamp
+    demo_notice = Column(String(255), nullable=True)   # Explicit disclaimer when in demonstration mode
+    
+    retrieved_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    # Relationships
+    consent = relationship("AccountAggregatorConsent", back_populates="retrievals")
+    instrument = relationship("FinancialInstrument", foreign_keys=[instrument_id])
+    institution = relationship("Institution", foreign_keys=[institution_id])
+

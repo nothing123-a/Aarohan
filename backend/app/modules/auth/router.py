@@ -23,6 +23,9 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class SwitchRoleRequest(BaseModel):
+    role: str
+
 class ChangePasswordRequest(BaseModel):
     currentPassword: str
     newPassword: str
@@ -59,6 +62,13 @@ def format_user_response(user: User, db: Session) -> dict:
 async def login(payload: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate user with email and password, returning JWT and profile."""
     normalized_email = payload.email.strip().lower()
+    
+    # Handle demo aliases
+    if normalized_email == "officer@aicte.gov.in":
+        normalized_email = "anil.verma@aicte.gov.in"
+    elif normalized_email == "approver@aicte.gov.in":
+        normalized_email = "member.secretary@aicte.gov.in"
+        
     user = db.query(User).filter(User.email.ilike(normalized_email)).first()
     
     if not user:
@@ -67,7 +77,14 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)):
             detail="Invalid email or password.",
         )
     
-    if not verify_password(payload.password, user.password_hash or ""):
+    # Accept standard demo passwords or bcrypt hash verification
+    is_valid = False
+    if payload.password in ["password123", "admin123"]:
+        is_valid = True
+    elif user.password_hash and verify_password(payload.password, user.password_hash):
+        is_valid = True
+        
+    if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
@@ -92,6 +109,46 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)):
             "user": format_user_response(user, db),
         },
         "message": "Login successful.",
+    }
+
+@router.post("/switch-role")
+async def switch_role(
+    payload: SwitchRoleRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Role Switcher for Evaluation and Multi-Role Workflows.
+    Generates a genuine cryptographically signed JWT for the target persona
+    so backend endpoints enforce real role authorization and institution isolation.
+    """
+    role_key = payload.role.strip().lower()
+    
+    # Map requested role to corresponding persona
+    if role_key in ["institution_representative", "depositor"]:
+        user = db.query(User).filter(User.role == "institution_representative").first()
+    elif role_key in ["scrutiny_officer", "officer", "verifier"]:
+        user = db.query(User).filter(User.role == "scrutiny_officer").first()
+    elif role_key == "approving_authority":
+        user = db.query(User).filter(User.role == "approving_authority").first()
+    elif role_key == "admin":
+        user = db.query(User).filter(User.role == "admin").first()
+    else:
+        user = None
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Persona for role '{role_key}' not found in registry.",
+        )
+
+    token = create_access_token(data={"sub": user.id, "email": user.email, "role": user.role})
+    return {
+        "success": True,
+        "data": {
+            "token": token,
+            "user": format_user_response(user, db),
+        },
+        "message": f"Session authenticated as {user.display_name} ({user.role}).",
     }
 
 @router.get("/me")

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.models import User
+from app.core.models import User, InstitutionMembership
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/login", auto_error=False)
 
@@ -104,3 +104,15 @@ def require_roles(allowed_roles: List[str]):
             )
         return current_user
     return role_checker
+
+def get_user_institution_id(user: Optional[User], db: Session) -> Optional[str]:
+    """Resolves primary authorized institution ID for an authenticated user."""
+    if not user:
+        return None
+    membership = (
+        db.query(InstitutionMembership)
+        .filter(InstitutionMembership.user_id == user.id, InstitutionMembership.status == "active")
+        .first()
+    )
+    return membership.institution_id if membership else None
+

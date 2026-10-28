@@ -13,6 +13,7 @@ import {
   ExternalLink,
   ShieldCheck,
   Search,
+  Coins,
 } from "lucide-react";
 import { StatCard, Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { FDRStatusBadge } from "@/components/shared/FDRStatusBadge";
@@ -101,53 +102,33 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
       )}
 
       {/* Quick Actions Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
           { label: "Submit New FDR", path: "/fdr/new", icon: <FilePlus2 size={16} />, highlight: true },
           { label: "My Institution FDRs", path: "/fdr", icon: <FileText size={16} /> },
-          { label: "Respond to Query", onClick: () => observations[0] && setActiveObservation(observations[0]), icon: <AlertCircle size={16} />, badge: observations.length },
+          { label: "Maturity Horizon", path: "/alerts", icon: <Clock size={16} /> },
           { label: "Submit Replacement", path: "/renewals", icon: <RefreshCw size={16} /> },
-          { label: "Release / Refund Request", path: "/release-requests", icon: <FileCheck size={16} /> },
+          { label: "Release Claims", path: "/release-requests", icon: <FileCheck size={16} /> },
+          { label: "Request for Refund", path: "/refund-requests", icon: <Coins size={16} />, highlight: true },
           { label: "Notifications & Alerts", path: "/notifications", icon: <Bell size={16} />, highlight: false },
         ].map((act, i) => (
-          act.path ? (
-            <Link
-              key={i}
-              to={act.path}
-              className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between group hover:shadow-xs ${
-                act.highlight
-                  ? "bg-orange-50/80 border-orange-200 text-orange-950 hover:bg-orange-100/60"
-                  : "bg-white border-slate-200 text-slate-800 hover:border-orange-300"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className={`p-2 rounded-lg ${act.highlight ? "bg-orange-500 text-white" : "bg-slate-100 text-slate-600 group-hover:text-orange-600 group-hover:bg-orange-50"}`}>
-                  {act.icon}
-                </span>
-                <ArrowRight size={13} className="text-slate-300 group-hover:text-orange-600 transition-colors" />
-              </div>
-              <p className="text-xs font-bold leading-snug">{act.label}</p>
-            </Link>
-          ) : (
-            <button
-              key={i}
-              onClick={act.onClick}
-              disabled={!act.badge}
-              className="p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between group bg-white border-slate-200 text-slate-800 hover:border-orange-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="p-2 rounded-lg bg-slate-100 text-slate-600 group-hover:text-orange-600 group-hover:bg-orange-50">
-                  {act.icon}
-                </span>
-                {act.badge ? (
-                  <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
-                    {act.badge}
-                  </span>
-                ) : null}
-              </div>
-              <p className="text-xs font-bold leading-snug">{act.label}</p>
-            </button>
-          )
+          <Link
+            key={i}
+            to={act.path}
+            className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between group hover:shadow-xs ${
+              act.highlight
+                ? "bg-orange-50/80 border-orange-200 text-orange-950 hover:bg-orange-100/60"
+                : "bg-white border-slate-200 text-slate-800 hover:border-orange-300"
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className={`p-2 rounded-lg ${act.highlight ? "bg-orange-500 text-white" : "bg-slate-100 text-slate-600 group-hover:text-orange-600 group-hover:bg-orange-50"}`}>
+                {act.icon}
+              </span>
+              <ArrowRight size={13} className="text-slate-300 group-hover:text-orange-600 transition-colors" />
+            </div>
+            <p className="text-xs font-bold leading-snug">{act.label}</p>
+          </Link>
         ))}
       </div>
 
@@ -291,6 +272,65 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
                 })}
               </tbody>
             </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Dedicated Request for Refund & Exit Clearances Section */}
+      <Card className="border-slate-200">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4 bg-slate-50/50">
+          <div>
+            <CardTitle className="text-base font-bold text-slate-900 font-plus-jakarta flex items-center gap-2">
+              <Coins size={18} className="text-emerald-600" />
+              <span>Institutional Refund Claims & Exit Clearances</span>
+            </CardTitle>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Dedicated statutory portal for pro-rata refunds upon student intake reductions, course closures, and completed lock-in releases.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" asChild>
+              <Link to="/release-requests">
+                <span>All Claims Register</span>
+              </Link>
+            </Button>
+            <Button size="sm" variant="primary" className="bg-emerald-600 hover:bg-emerald-500 text-white" asChild>
+              <Link to="/refund-requests">
+                <Coins size={14} />
+                <span>Apply for Deposit Refund</span>
+              </Link>
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-3.5 rounded-xl border border-emerald-100 bg-emerald-50/50 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Refund Application Status</span>
+                <p className="text-base font-extrabold text-emerald-950 font-mono mt-1">1 Pro-Rata Claim Active</p>
+              </div>
+              <p className="text-[11px] text-emerald-700 mt-2">
+                Program closure pro-rata refund dossier under scrutiny review by AICTE Regulation Bureau.
+              </p>
+            </div>
+            <div className="p-3.5 rounded-xl border border-blue-100 bg-blue-50/50 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800">Approved Discharge NOCs</span>
+                <p className="text-base font-extrabold text-blue-950 font-mono mt-1">1 Sanction Issued</p>
+              </div>
+              <p className="text-[11px] text-blue-700 mt-2">
+                Official Bank Discharge NOC voucher ready for presentation to Canara Bank CBS host.
+              </p>
+            </div>
+            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Statutory Refund Norm</span>
+                <p className="text-base font-bold text-slate-900 mt-1">APH Clause 11.2</p>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-2">
+                Mandatory 5-year lock-in with state regulatory "No Dues" clearance required prior to disbursement.
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -1,16 +1,35 @@
 """
 FDR-SMART Scrutiny & Observation Engine
-Implements:
-- Authorized Scrutiny Queue
-- Observation Lifecycle (Issue, Respond, Resolve)
-- Separation of Duties (Institution Rep cannot approve own instrument)
-- Audit Trail Preservation
+Persistent Database Operations backed by SQLAlchemy 2.x models:
+- FinancialInstrument
+- InstrumentVerification
+- VerificationDiscrepancy
+- AuditEvent
+
+Enforces:
+- Authorized Scrutiny Queue derived from live central database
+- Discrepancy & Observation Lifecycle (Issue, Respond, Resolve)
+- Separation of Duties (Institution Rep cannot review or record outcomes on own instrument)
+- Immutable Audit Trail Preservation
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
 from datetime import datetime, timezone
 import uuid
+from sqlalchemy.orm import Session
+from sqlalchemy import desc
+
+from app.core.database import get_db
+from app.core.models import (
+    FinancialInstrument,
+    Institution,
+    User,
+    InstrumentVerification,
+    VerificationDiscrepancy,
+    AuditEvent,
+)
+from app.core.security import get_current_user_optional
 
 router = APIRouter(prefix="/scrutiny", tags=["Scrutiny & Observations"])
 
@@ -44,105 +63,93 @@ class ScrutinyDecision(BaseModel):
     officer_id: str
     officer_name: str
     officer_role: str
-    outcome: Literal["VERIFIED", "OBSERVATION_ISSUED", "REJECTED"]
+    outcome: Literal[
+        "VERIFIED",
+        "DISCREPANCY_FOUND",
+        "CLARIFICATION_REQUIRED",
+        "UNABLE_TO_VERIFY",
+        "OBSERVATION_ISSUED",
+        "REJECTED",
+    ]
     decision_notes: str = Field(..., min_length=5)
-
-# ─── IN-MEMORY STORE FOR BACKEND API ─────────────────────────────────
-
-OBSERVATIONS_STORE = [
-    {
-        "id": "obs-001",
-        "fdr_id": "fdr-002",
-        "fdr_number": "FDR/AICTE/2026/092",
-        "institution_id": "inst-001",
-        "institution_name": "Delhi Technological University (DTU)",
-        "category": "AMOUNT_DISCREPANCY",
-        "observation": "Deposit certificate scan indicates principal of Rs. 35,00,000 whereas institutional declaration form declared Rs. 30,00,000.",
-        "requested_action": "Upload revised institutional declaration conforming to Rs. 35,00,000 bank certificate.",
-        "officer_name": "Anil Verma (Senior Scrutiny Officer)",
-        "officer_id": "usr-so-01",
-        "status": "OPEN",
-        "created_at": "2026-10-25T11:30:00Z",
-        "response_notes": None,
-        "responded_by": None,
-        "responded_at": None,
-    },
-    {
-        "id": "obs-002",
-        "fdr_id": "fdr-005",
-        "fdr_number": "FDR/AICTE/2026/042",
-        "institution_id": "inst-002",
-        "institution_name": "BITS Pilani — Goa Campus",
-        "category": "LIEN_UNVERIFIED",
-        "observation": "Issuing branch IFSC (HDFC0000042) confirmation letter does not bear the branch manager digital verification token.",
-        "requested_action": "Please upload revised bank confirmation letter bearing branch manager token or seal.",
-        "officer_name": "Anil Verma (Senior Scrutiny Officer)",
-        "officer_id": "usr-so-01",
-        "status": "OPEN",
-        "created_at": "2026-10-26T14:15:00Z",
-        "response_notes": None,
-        "responded_by": None,
-        "responded_at": None,
-    },
-]
-
-SCRUTINY_QUEUE_STORE = [
-    {
-        "id": "fdr-001",
-        "fdr_number": "FDR/AICTE/2026/089",
-        "institution_id": "inst-001",
-        "institution_name": "Delhi Technological University (DTU)",
-        "bank_name": "State Bank of India",
-        "principal_amount": 5000000,
-        "submission_date": "2024-03-16",
-        "submission_status": "SUBMITTED",
-        "verification_status": "VERIFIED",
-        "assigned_reviewer": "Anil Verma",
-        "open_discrepancies_count": 0,
-        "required_next_action": "CBS Lien Notation Validation Complete",
-    },
-    {
-        "id": "fdr-002",
-        "fdr_number": "FDR/AICTE/2026/092",
-        "institution_id": "inst-001",
-        "institution_name": "Delhi Technological University (DTU)",
-        "bank_name": "Punjab National Bank",
-        "principal_amount": 3500000,
-        "submission_date": "2024-06-10",
-        "submission_status": "SUBMITTED",
-        "verification_status": "DISCREPANCY_FLAGGED",
-        "assigned_reviewer": "Anil Verma",
-        "open_discrepancies_count": 2,
-        "required_next_action": "Awaiting Institution Response to Observation",
-    },
-    {
-        "id": "fdr-004",
-        "fdr_number": "FDR/AICTE/2026/039",
-        "institution_id": "inst-002",
-        "institution_name": "BITS Pilani — Goa Campus",
-        "bank_name": "State Bank of India",
-        "principal_amount": 10000000,
-        "submission_date": "2024-01-11",
-        "submission_status": "SUBMITTED",
-        "verification_status": "UNDER_SCRUTINY",
-        "assigned_reviewer": "Anil Verma",
-        "open_discrepancies_count": 0,
-        "required_next_action": "Perform Cross-Verification & Record Scrutiny Finding",
-    },
-]
 
 # ─── ENDPOINTS ───────────────────────────────────────────────────────
 
 @router.get("/queue")
-async def get_scrutiny_queue():
-    """Retrieve all instruments currently in the regulatory scrutiny queue."""
+async def get_scrutiny_queue(db: Session = Depends(get_db)):
+    """
+    Retrieve all instruments currently in the regulatory scrutiny queue from the live database.
+    """
+    instruments = (
+        db.query(FinancialInstrument)
+        .order_by(desc(FinancialInstrument.created_at))
+        .all()
+    )
+
+    queue = []
+    for inst in instruments:
+        # Determine open discrepancies count
+        open_disc_count = (
+            db.query(VerificationDiscrepancy)
+            .join(InstrumentVerification)
+            .filter(
+                InstrumentVerification.instrument_id == inst.id,
+                VerificationDiscrepancy.resolution_status == "open",
+            )
+            .count()
+        )
+
+        # Map display status
+        v_status = inst.verification_status.upper()
+        if open_disc_count > 0:
+            v_status = "DISCREPANCY_FLAGGED"
+        elif inst.verification_status in ["in_review", "under_scrutiny"]:
+            v_status = "UNDER_SCRUTINY"
+        elif inst.verification_status == "verified":
+            v_status = "VERIFIED"
+        elif inst.submission_status == "submitted" and inst.verification_status in ["not_started", "pending"]:
+            v_status = "PENDING_SCRUTINY"
+
+        # Action needed description
+        if v_status == "VERIFIED":
+            next_action = "CBS Lien Notation Validation Complete"
+        elif v_status == "DISCREPANCY_FLAGGED":
+            next_action = "Awaiting Institution Response to Observation"
+        elif v_status == "UNDER_SCRUTINY":
+            next_action = "Perform Cross-Verification & Record Scrutiny Finding"
+        else:
+            next_action = "Assign Scrutiny Officer for Document Extraction Review"
+
+        queue.append({
+            "id": inst.id,
+            "fdr_number": inst.reference_number,
+            "institution_id": inst.institution_id,
+            "institution_name": inst.institution.name if inst.institution else "Registered Institution",
+            "bank_name": inst.bank_name,
+            "principal_amount": float(inst.amount),
+            "submission_date": inst.issue_date.isoformat() if inst.issue_date else "2024-03-16",
+            "submission_status": inst.submission_status.upper(),
+            "verification_status": v_status,
+            "financial_verification_status": (getattr(inst, "financial_verification_status", None) or "pending").upper(),
+            "maturity_date": inst.maturity_date.isoformat() if inst.maturity_date else "",
+            "assigned_reviewer": "Anil Verma (Senior Scrutiny Officer)",
+            "open_discrepancies_count": open_disc_count,
+            "required_next_action": next_action,
+        })
+
     return {
-        "total_cases": len(SCRUTINY_QUEUE_STORE),
-        "queue": SCRUTINY_QUEUE_STORE,
+        "total_cases": len(queue),
+        "queue": queue,
     }
 
 @router.post("/cases/{fdr_id}/start-review")
-async def start_scrutiny_review(fdr_id: str, officer_id: str, officer_name: str, officer_role: str):
+async def start_scrutiny_review(
+    fdr_id: str,
+    officer_id: str,
+    officer_name: str,
+    officer_role: str,
+    db: Session = Depends(get_db),
+):
     """
     Officer initiates scrutiny on an instrument.
     Enforces separation of duties: Institution Representatives CANNOT review.
@@ -153,94 +160,244 @@ async def start_scrutiny_review(fdr_id: str, officer_id: str, officer_name: str,
             detail="Separation of Duties Violation: Institution representatives cannot perform official regulatory scrutiny.",
         )
 
-    # Locate case
-    for case in SCRUTINY_QUEUE_STORE:
-        if case["id"] == fdr_id:
-            case["verification_status"] = "UNDER_SCRUTINY"
-            case["assigned_reviewer"] = officer_name
-            case["required_next_action"] = "Scrutiny in progress by " + officer_name
-            return {
-                "status": "SUCCESS",
-                "message": f"Scrutiny review started for {case['fdr_number']}",
-                "case": case,
-            }
+    inst = db.query(FinancialInstrument).filter(FinancialInstrument.id == fdr_id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instrument not found in scrutiny queue.")
 
-    raise HTTPException(status_code=404, detail="Instrument not found in scrutiny queue.")
+    inst.verification_status = "in_review"
+    now = datetime.now(timezone.utc)
+
+    db.add(
+        AuditEvent(
+            id=f"aud-{uuid.uuid4().hex[:6]}",
+            actor_user_id=officer_id,
+            institution_id=inst.institution_id,
+            instrument_id=inst.id,
+            action="SCRUTINY_REVIEW_STARTED",
+            entity_type="financial_instruments",
+            entity_id=inst.id,
+            outcome="success",
+            details={"officer_name": officer_name, "officer_role": officer_role},
+            occurred_at=now,
+        )
+    )
+    db.commit()
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Scrutiny review started for {inst.reference_number}",
+        "case": {
+            "id": inst.id,
+            "fdr_number": inst.reference_number,
+            "verification_status": "UNDER_SCRUTINY",
+            "assigned_reviewer": officer_name,
+            "required_next_action": f"Scrutiny in progress by {officer_name}",
+        },
+    }
 
 @router.post("/observations")
-async def create_scrutiny_observation(payload: ScrutinyObservationCreate):
+async def create_scrutiny_observation(
+    payload: ScrutinyObservationCreate,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
     """
     Authorized officer records a regulatory observation and requests clarification.
+    Persists to verification_discrepancies and updates instrument status.
+    Only scrutiny_officer and approving_authority may issue observations.
     """
-    new_obs = {
-        "id": f"obs-{uuid.uuid4().hex[:6]}",
-        "fdr_id": payload.fdr_id,
-        "category": payload.category,
-        "observation": payload.observation,
-        "requested_action": payload.requested_action,
-        "officer_name": payload.officer_name,
-        "officer_id": payload.officer_id,
-        "status": "OPEN",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "response_notes": None,
-        "responded_by": None,
-        "responded_at": None,
-    }
-    OBSERVATIONS_STORE.append(new_obs)
+    # Derive role from authenticated token or fall back to payload for demo tokens
+    caller_role = current_user.role if current_user else payload.officer_role
 
-    # Update scrutiny queue status
-    for case in SCRUTINY_QUEUE_STORE:
-        if case["id"] == payload.fdr_id:
-            case["verification_status"] = "DISCREPANCY_FLAGGED"
-            case["open_discrepancies_count"] += 1
-            case["required_next_action"] = "Awaiting Institution Response to Observation"
+    if caller_role in ["institution_representative", "depositor", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission Denied: Role '{caller_role}' cannot issue regulatory scrutiny observations.",
+        )
+
+    inst = db.query(FinancialInstrument).filter(FinancialInstrument.id == payload.fdr_id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail=f"Instrument '{payload.fdr_id}' not found.")
+
+    now = datetime.now(timezone.utc)
+
+    # Find or create verification record
+    verif = (
+        db.query(InstrumentVerification)
+        .filter(InstrumentVerification.instrument_id == inst.id)
+        .order_by(desc(InstrumentVerification.created_at))
+        .first()
+    )
+    if not verif:
+        verif = InstrumentVerification(
+            id=f"ver-{uuid.uuid4().hex[:6]}",
+            instrument_id=inst.id,
+            reviewed_by_user_id=payload.officer_id or "usr-so-01",
+            outcome="discrepancy_found",
+            review_notes=payload.observation,
+            reviewed_at=now,
+            created_at=now,
+        )
+        db.add(verif)
+        db.flush()
+
+    new_disc = VerificationDiscrepancy(
+        id=f"obs-{uuid.uuid4().hex[:6]}",
+        verification_id=verif.id,
+        field_name=payload.category,
+        source_type="regulatory_scrutiny",
+        expected_value=payload.requested_action,
+        observed_value=payload.observation,
+        resolution_status="open",
+        resolution_notes=payload.requested_action,
+        created_at=now,
+    )
+    db.add(new_disc)
+
+    # Update instrument status
+    inst.verification_status = "discrepancy_found"
+
+    db.add(
+        AuditEvent(
+            id=f"aud-{uuid.uuid4().hex[:6]}",
+            actor_user_id=payload.officer_id,
+            institution_id=inst.institution_id,
+            instrument_id=inst.id,
+            action="SCRUTINY_OBSERVATION_ISSUED",
+            entity_type="verification_discrepancies",
+            entity_id=new_disc.id,
+            outcome="success",
+            details={
+                "category": payload.category,
+                "observation": payload.observation,
+                "requested_action": payload.requested_action,
+                "officer": payload.officer_name,
+            },
+            occurred_at=now,
+        )
+    )
+    db.commit()
 
     return {
         "status": "SUCCESS",
         "message": "Observation registered. Notification dispatched to institution.",
-        "observation": new_obs,
+        "observation": {
+            "id": new_disc.id,
+            "fdr_id": inst.id,
+            "category": payload.category,
+            "observation": payload.observation,
+            "requested_action": payload.requested_action,
+            "officer_name": payload.officer_name,
+            "officer_id": payload.officer_id,
+            "status": "OPEN",
+            "created_at": now.isoformat(),
+        },
     }
 
 @router.get("/observations")
-async def list_observations(fdr_id: Optional[str] = None):
-    """List observations, optionally filtered by FDR ID."""
+async def list_observations(
+    fdr_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """List observations from persistent database, optionally filtered by FDR ID."""
+    query = (
+        db.query(VerificationDiscrepancy, InstrumentVerification, FinancialInstrument)
+        .join(InstrumentVerification, VerificationDiscrepancy.verification_id == InstrumentVerification.id)
+        .join(FinancialInstrument, InstrumentVerification.instrument_id == FinancialInstrument.id)
+    )
+
     if fdr_id:
-        filtered = [obs for obs in OBSERVATIONS_STORE if obs["fdr_id"] == fdr_id]
-        return {"observations": filtered}
-    return {"observations": OBSERVATIONS_STORE}
+        query = query.filter(InstrumentVerification.instrument_id == fdr_id)
+
+    rows = query.order_by(desc(VerificationDiscrepancy.created_at)).all()
+    results = []
+    for disc, verif, inst in rows:
+        results.append({
+            "id": disc.id,
+            "fdr_id": inst.id,
+            "fdr_number": inst.reference_number,
+            "institution_id": inst.institution_id,
+            "institution_name": inst.institution.name if inst.institution else "Registered Institution",
+            "category": disc.field_name,
+            "observation": disc.observed_value,
+            "requested_action": disc.expected_value,
+            "officer_name": "Anil Verma (Senior Scrutiny Officer)",
+            "officer_id": verif.reviewed_by_user_id,
+            "status": "OPEN" if disc.resolution_status == "open" else "RESOLVED",
+            "created_at": disc.created_at.isoformat() if disc.created_at else "",
+            "response_notes": disc.resolution_notes if disc.resolution_status != "open" else None,
+            "responded_by": disc.resolved_by_user_id,
+            "responded_at": disc.resolved_at.isoformat() if disc.resolved_at else None,
+        })
+
+    return {"observations": results}
 
 @router.post("/observations/{observation_id}/respond")
-async def respond_to_observation(observation_id: str, payload: ObservationResponse):
+async def respond_to_observation(
+    observation_id: str,
+    payload: ObservationResponse,
+    db: Session = Depends(get_db),
+):
     """
     Institution representative responds to an observation, uploads clarifying evidence,
     and resubmits the instrument for re-scrutiny.
     """
-    for obs in OBSERVATIONS_STORE:
-        if obs["id"] == observation_id:
-            obs["status"] = "RESPONDED"
-            obs["response_notes"] = payload.response_notes
-            obs["responded_by"] = payload.responded_by
-            obs["responded_at"] = datetime.now(timezone.utc).isoformat()
-            obs["supporting_document_name"] = payload.supporting_document_name
+    disc = db.query(VerificationDiscrepancy).filter(VerificationDiscrepancy.id == observation_id).first()
+    if not disc:
+        raise HTTPException(status_code=404, detail="Observation not found.")
 
-            # Update scrutiny queue
-            for case in SCRUTINY_QUEUE_STORE:
-                if case["id"] == obs["fdr_id"]:
-                    case["verification_status"] = "UNDER_SCRUTINY"
-                    case["required_next_action"] = "Clarification received. Re-scrutiny required by officer."
+    now = datetime.now(timezone.utc)
+    disc.resolution_status = "resolved"
+    disc.resolution_notes = payload.response_notes
+    disc.resolved_by_user_id = payload.responded_by
+    disc.resolved_at = now
 
-            return {
-                "status": "SUCCESS",
-                "message": "Institution response submitted successfully. Re-scrutiny scheduled.",
-                "observation": obs,
-            }
+    verif = db.query(InstrumentVerification).filter(InstrumentVerification.id == disc.verification_id).first()
+    if verif:
+        inst = db.query(FinancialInstrument).filter(FinancialInstrument.id == verif.instrument_id).first()
+        if inst:
+            inst.verification_status = "in_review"
 
-    raise HTTPException(status_code=404, detail="Observation not found.")
+    db.add(
+        AuditEvent(
+            id=f"aud-{uuid.uuid4().hex[:6]}",
+            actor_user_id=payload.responded_by,
+            institution_id=payload.institution_id,
+            instrument_id=verif.instrument_id if verif else None,
+            action="OBSERVATION_RESPONSE_SUBMITTED",
+            entity_type="verification_discrepancies",
+            entity_id=observation_id,
+            outcome="success",
+            details={
+                "response_notes": payload.response_notes,
+                "supporting_document": payload.supporting_document_name,
+            },
+            occurred_at=now,
+        )
+    )
+    db.commit()
+
+    return {
+        "status": "SUCCESS",
+        "message": "Institution response submitted successfully. Re-scrutiny scheduled.",
+        "observation": {
+            "id": disc.id,
+            "status": "RESPONDED",
+            "response_notes": payload.response_notes,
+            "responded_by": payload.responded_by,
+            "responded_at": now.isoformat(),
+        },
+    }
 
 @router.post("/cases/{fdr_id}/outcome")
-async def record_scrutiny_outcome(fdr_id: str, payload: ScrutinyDecision):
+async def record_scrutiny_outcome(
+    fdr_id: str,
+    payload: ScrutinyDecision,
+    db: Session = Depends(get_db),
+):
     """
     Authorized officer records the formal review decision.
+    Persists to instrument_verifications and updates instrument verification_status.
     """
     if payload.officer_role in ["institution_representative", "depositor"]:
         raise HTTPException(
@@ -248,17 +405,49 @@ async def record_scrutiny_outcome(fdr_id: str, payload: ScrutinyDecision):
             detail="Separation of Duties Violation: Institution representatives cannot record regulatory outcomes.",
         )
 
-    for case in SCRUTINY_QUEUE_STORE:
-        if case["id"] == fdr_id:
-            case["verification_status"] = payload.outcome
-            case["required_next_action"] = (
-                "Scrutiny Cleared" if payload.outcome == "VERIFIED" else f"Scrutiny {payload.outcome}"
-            )
-            return {
-                "status": "SUCCESS",
-                "message": f"Scrutiny outcome recorded as {payload.outcome}",
-                "decision": payload,
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
-            }
+    inst = db.query(FinancialInstrument).filter(FinancialInstrument.id == fdr_id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Case not found in scrutiny queue.")
 
-    raise HTTPException(status_code=404, detail="Case not found in scrutiny queue.")
+    now = datetime.now(timezone.utc)
+    outcome_lower = payload.outcome.lower()
+    inst.verification_status = outcome_lower
+
+    new_verif = InstrumentVerification(
+        id=f"ver-{uuid.uuid4().hex[:6]}",
+        instrument_id=inst.id,
+        reviewed_by_user_id=payload.officer_id,
+        outcome=outcome_lower,
+        review_notes=payload.decision_notes,
+        reviewed_at=now,
+        created_at=now,
+    )
+    db.add(new_verif)
+
+    db.add(
+        AuditEvent(
+            id=f"aud-{uuid.uuid4().hex[:6]}",
+            actor_user_id=payload.officer_id,
+            institution_id=inst.institution_id,
+            instrument_id=inst.id,
+            action="SCRUTINY_OUTCOME_RECORDED",
+            entity_type="instrument_verifications",
+            entity_id=new_verif.id,
+            outcome="success",
+            details={
+                "outcome": payload.outcome,
+                "notes": payload.decision_notes,
+                "officer_name": payload.officer_name,
+                "officer_role": payload.officer_role,
+            },
+            occurred_at=now,
+        )
+    )
+    db.commit()
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Scrutiny outcome recorded as {payload.outcome}",
+        "decision": payload,
+        "recorded_at": now.isoformat(),
+    }

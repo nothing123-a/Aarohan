@@ -96,9 +96,19 @@ export function Topbar({ pageTitle }: TopbarProps) {
 
       {/* Right Controls */}
       <div className="flex items-center gap-2.5 flex-shrink-0">
-        {/* Role Switcher Pill for Testing / Jury Demonstration */}
-        <div className="hidden xl:flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
-          <span className="text-[10px] text-slate-400 font-bold uppercase px-1.5">View As:</span>
+        {/*
+          ── EVALUATION DEMO SWITCHER ─────────────────────────────────────────
+          Calls /api/auth/switch-role to obtain a real signed JWT for each persona.
+          Backend authorization enforces the actual role on every API call.
+          This control does NOT bypass backend permissions.
+        */}
+        <div
+          className="hidden xl:flex items-center gap-1 bg-amber-50 p-1 rounded-lg border border-amber-200 text-xs"
+          title="SIH Demo: Switches active JWT persona. Backend enforces real role on every API call."
+        >
+          <span className="text-[10px] text-amber-700 font-bold uppercase px-1.5 whitespace-nowrap">
+            🎓 Demo:
+          </span>
           <button
             onClick={() => switchRole("institution_representative")}
             className={cn(
@@ -107,9 +117,9 @@ export function Topbar({ pageTitle }: TopbarProps) {
                 ? "bg-orange-500 text-white shadow-2xs"
                 : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
             )}
-            title="Institution Representative (DTU)"
+            title="Institution Representative (DTU) — limited to own institution records"
           >
-            Institution Rep
+            Inst Rep
           </button>
           <button
             onClick={() => switchRole("scrutiny_officer")}
@@ -119,9 +129,9 @@ export function Topbar({ pageTitle }: TopbarProps) {
                 ? "bg-blue-600 text-white shadow-2xs"
                 : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
             )}
-            title="AICTE Scrutiny Officer"
+            title="AICTE Scrutiny Officer — can recommend but not approve releases"
           >
-            Scrutiny Officer
+            Scrutiny
           </button>
           <button
             onClick={() => switchRole("approving_authority")}
@@ -131,9 +141,9 @@ export function Topbar({ pageTitle }: TopbarProps) {
                 ? "bg-purple-700 text-white shadow-2xs"
                 : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
             )}
-            title="Executive Approving Authority"
+            title="Executive Approving Authority — sole role that can sanction final releases"
           >
-            Approving Auth
+            Approver
           </button>
           <button
             onClick={() => switchRole("admin")}
@@ -143,7 +153,7 @@ export function Topbar({ pageTitle }: TopbarProps) {
                 ? "bg-slate-800 text-white shadow-2xs"
                 : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
             )}
-            title="System Administrator (No Financial Approval)"
+            title="System Administrator — no financial approval authority"
           >
             Admin
           </button>

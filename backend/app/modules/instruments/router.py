@@ -20,7 +20,7 @@ from app.core.models import (
     ReleaseRefundRequest,
     AuditEvent,
 )
-from app.core.security import get_current_user_optional, get_current_user
+from app.core.security import get_current_user_optional, get_current_user, get_user_institution_id
 from app.modules.documents.storage import store_document
 
 router = APIRouter(prefix="/fdrs", tags=["Financial Instruments (FDRs)"])
@@ -156,10 +156,17 @@ async def get_all_fdrs(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """Retrieves paginated list of financial instruments with multi-criteria filters."""
+    """Retrieves paginated list of financial instruments, scoped to institution for institution reps."""
     query = db.query(FinancialInstrument)
+
+    # Institutional data isolation — institution reps only see their own institution's records
+    if current_user and current_user.role in ["institution_representative", "depositor"]:
+        user_inst_id = get_user_institution_id(current_user, db)
+        if user_inst_id:
+            query = query.filter(FinancialInstrument.institution_id == user_inst_id)
 
     if status and status != "all":
         if status == "draft":
@@ -221,13 +228,27 @@ async def get_maturity_alerts(db: Session = Depends(get_db)):
     }
 
 @router.get("/{id}")
-async def get_fdr_by_id(id: str, db: Session = Depends(get_db)):
-    """Retrieve details for a single financial instrument by ID or reference number."""
+async def get_fdr_by_id(
+    id: str,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Retrieve details for a single financial instrument, with institution isolation."""
     inst = db.query(FinancialInstrument).filter(
         (FinancialInstrument.id == id) | (FinancialInstrument.reference_number == id)
     ).first()
     if not inst:
         raise HTTPException(status_code=404, detail="Financial instrument not found.")
+
+    # Institution representatives may only view their own institution's records
+    if current_user and current_user.role in ["institution_representative", "depositor"]:
+        user_inst_id = get_user_institution_id(current_user, db)
+        if user_inst_id and inst.institution_id != user_inst_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access Denied: This FDR record belongs to a different institution.",
+            )
+
     return {
         "success": True,
         "data": serialize_fdr(inst, db)

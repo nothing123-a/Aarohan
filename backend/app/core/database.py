@@ -14,6 +14,13 @@ Base = declarative_base()
 
 def create_db_engine():
     db_url = settings.DATABASE_URL
+    if db_url.startswith("sqlite"):
+        return create_engine(
+            db_url,
+            connect_args={"check_same_thread": False},
+            pool_pre_ping=True,
+        )
+
     try:
         if db_url.startswith("postgresql"):
             # Test connectivity quickly

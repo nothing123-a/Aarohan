@@ -875,6 +875,64 @@ The backend must verify the user's authority, the discrepancy's current state, a
 
 A resolved discrepancy must retain its historical values and resolution details.
 
+## 11.6 Bank Verification API
+
+### Endpoints
+
+| Method | Endpoint | Purpose | Access |
+| ------ | -------- | ------- | ------ |
+| POST | /verification/bank-verify/{instrument_id} | Initiate independent bank verification for an FDR | Scrutiny Officer or Admin only |
+| GET | /verification/bank-verify/history/{instrument_id} | Retrieve historical bank verification attempts and findings | Scrutiny Officer, Approving Authority, or Admin |
+
+### Query Parameters for /verification/bank-verify/{instrument_id}
+
+* orce_refresh (boolean, default: alse): Bypasses the 60-minute duplicate-call prevention cache and queries the bank adapter anew.
+
+### Status Semantics
+
+The verification response distinguishes technical request status from regulatory FDR validity:
+
+* erified: Bank records confirmed the deposit, and all compared fields matched.
+* discrepancy_found: Bank returned valid deposit records, but one or more fields (e.g. principal amount, maturity date) differed from submitted values.
+* invalid_reference: Bank does not recognize the FDR reference number.
+* unable_to_verify: Incomplete bank response received; manual scrutiny required.
+* service_unavailable: Gateway timeout or network failure. **Must not be treated as a failed FDR verification.**
+* uth_failure: Bank integration credentials rejected. Technical issue.
+
+### Data Source Attribution
+
+Every bank verification outcome explicitly declares data_source:
+* live_bank: Confirmed via official, authorized bank CBS/SFMS gateway.
+* demonstration: Produced by mock adapter for development/demonstration mode. Prominently flagged with a demo_notice.
+* manual: Manually recorded from branch letters/in-person verification.
+* unavailable: No live integration configured for this financial institution.
+
+## 11.7 Weekly Bank Statement Analyzer APIs
+
+Endpoints for ingesting, validating, and reconciling institutional bank statements against required fund allocations. Accessible exclusively by Approving Authorities and Scrutiny Officers.
+
+| Method | Endpoint | Purpose | Access |
+| ------ | -------- | ------- | ------ |
+| POST | /statement-analysis/upload | Upload & analyze bank statement PDF/CSV | Approving Authority, Scrutiny Officer |
+| GET | /statement-analysis/statements | List statements with audit filtering | Approving Authority, Scrutiny Officer |
+| GET | /statement-analysis/statements/{id} | Retrieve statement analysis & transactions | Approving Authority, Scrutiny Officer |
+| POST | /statement-analysis/statements/{id}/decision | Record review decision (ACCEPTED/FLAGGED) | Approving Authority, Scrutiny Officer |
+| GET | /statement-analysis/alerts | List liquidity & reconciliation alerts | Approving Authority, Scrutiny Officer |
+| POST | /statement-analysis/alerts/{id}/resolve | Resolve an active financial alert | Approving Authority, Scrutiny Officer |
+
+## 11.8 Account Aggregator (AA) Integration APIs
+
+Compliant with RBI NBFC-AA Master Directions and Sahamati/ReBIT standards. Strictly consent-based, with zero collection of banking credentials, passwords, PINs, or OTPs.
+
+| Method | Endpoint | Purpose | Access |
+| ------ | -------- | ------- | ------ |
+| POST | /account-aggregator/consents | Initiate institutional consent request | Scrutiny Officer, Approving Authority |
+| GET | /account-aggregator/consents | List institutional consents & statuses | Scrutiny Officer, Approving Authority |
+| GET | /account-aggregator/consents/{id}/status | Poll or query real-time consent state | Scrutiny Officer, Approving Authority |
+| POST | /account-aggregator/consents/{id}/revoke | Revoke active institutional consent | Scrutiny Officer, Approving Authority |
+| POST | /account-aggregator/telemetry/{instrument_id} | Fetch Term Deposit data & verify concordance | Scrutiny Officer, Approving Authority |
+| GET | /account-aggregator/telemetry/{instrument_id} | Retrieve latest telemetry record | Scrutiny Officer, Approving Authority |
+
 ---
 
 # 12. Maturity Monitoring APIs

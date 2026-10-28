@@ -17,6 +17,9 @@ import {
   Palette,
   Users,
   Clock,
+  Coins,
+  FileSpreadsheet,
+  Layers,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
@@ -44,6 +47,7 @@ export function Sidebar() {
           { label: "Submit New FDR",              path: "/fdr/new",          icon: <FilePlus2 size={17} /> },
           { label: "Renewals & Extensions",       path: "/renewals",         icon: <RefreshCw size={17} /> },
           { label: "Release & Refund Claims",     path: "/release-requests", icon: <FileCheck size={17} /> },
+          { label: "Request for Refund",          path: "/refund-requests",  icon: <Coins size={17} /> },
           { label: "Observations & Alerts",       path: "/notifications",    icon: <BellRing size={17} /> },
         ];
       case "scrutiny_officer":
@@ -52,6 +56,8 @@ export function Sidebar() {
         return [
           { label: "Scrutiny Dashboard",          path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
           { label: "OCR Verification Queue",      path: "/verification",     icon: <FileCheck2 size={17} /> },
+          { label: "Weekly Statements",           path: "/statements",       icon: <FileSpreadsheet size={17} /> },
+          { label: "Account Aggregator",          path: "/account-aggregator", icon: <Layers size={17} /> },
           { label: "Master Deposit Register",     path: "/fdr",              icon: <FileText size={17} /> },
           { label: "Maturity Timeline",           path: "/monitoring",       icon: <Clock size={17} /> },
           { label: "Scrutiny Reports",            path: "/reports",          icon: <TrendingUp size={17} /> },
@@ -60,7 +66,11 @@ export function Sidebar() {
       case "approving_authority":
         return [
           { label: "Executive Dashboard",         path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
+          { label: "Weekly Bank Statements",      path: "/statements",       icon: <FileSpreadsheet size={17} /> },
+          { label: "Account Aggregator (AA)",     path: "/account-aggregator", icon: <Layers size={17} /> },
+          { label: "Approval Queue",              path: "/release-requests?status=pending", icon: <Clock size={17} /> },
           { label: "Release & Refund Sanctions",  path: "/release-requests", icon: <FileCheck size={17} /> },
+          { label: "Refund Requests",             path: "/refund-requests",  icon: <Coins size={17} /> },
           { label: "Master Deposit Register",     path: "/fdr",              icon: <FileText size={17} /> },
           { label: "Maturity Horizon Calendar",   path: "/monitoring",       icon: <Clock size={17} /> },
           { label: "Executive Reports",           path: "/reports",          icon: <TrendingUp size={17} /> },

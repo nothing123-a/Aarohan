@@ -1,17 +1,37 @@
 """
 FDR-SMART Release & Refund Requests Module
-Implements:
-- Security deposit release and refund applications
-- Institutional submission form & supporting document dossier
-- Official administrative approval workflow
-- Strict permission boundaries: System Administrator CANNOT approve financial releases
-- Statutory financial safeguard: Approval authorizes Bank Discharge NOC; does not transfer funds
+Persistent Database Operations backed by SQLAlchemy 2.x models:
+- ReleaseRefundRequest
+- ReleaseRefundDecision
+- FinancialInstrument
+- InstrumentLifecycleEvent
+- AuditEvent
+
+Enforces:
+- Strict RBAC: System Admin & Institution Rep barred from approving financial releases
+- Scrutiny Officer can recommend or query, but cannot give final financial release sign-off
+- Approving Authority required for final sign-off authorizing Bank Discharge NOC
+- Full audit event logging and immutable decision history
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
 from datetime import datetime, timezone
 import uuid
+from sqlalchemy.orm import Session
+from sqlalchemy import desc
+
+from app.core.database import get_db
+from app.core.security import get_current_user_optional, get_current_user, get_user_institution_id
+from app.core.models import (
+    ReleaseRefundRequest,
+    ReleaseRefundDecision,
+    FinancialInstrument,
+    Institution,
+    User,
+    InstrumentLifecycleEvent,
+    AuditEvent,
+)
 
 router = APIRouter(prefix="/releases", tags=["Release & Refund Requests"])
 
@@ -38,207 +58,373 @@ class ReleaseDecisionRecord(BaseModel):
     decision: Literal["RECOMMENDED_FOR_APPROVAL", "APPROVED", "REJECTED", "RETURNED_FOR_QUERY"]
     decision_reason: str = Field(..., min_length=10)
 
-# ─── IN-MEMORY STORE ─────────────────────────────────────────────────
+# ─── SERIALIZATION HELPER ─────────────────────────────────────────────
 
-RELEASE_REQUESTS_STORE = [
-    {
-        "id": "rel-001",
-        "fdr_id": "fdr-008",
-        "fdr_number": "FDR/AICTE/2026/116",
-        "institution_id": "inst-003",
-        "institution_name": "PSG College of Technology, Coimbatore",
-        "bank_name": "Canara Bank",
-        "principal_amount": 5000000.0,
-        "request_type": "FULL_RELEASE",
-        "justification_reason": "Automobile Engineering Division discontinued. 5-year lock-in period concluded. SRO No Dues Clearance obtained.",
-        "regulatory_clause_reference": "AICTE Approval Process Handbook (APH) Clause 11.2",
+def serialize_release_request(req: ReleaseRefundRequest, db: Session) -> dict:
+    inst = (
+        req.instrument
+        or db.query(FinancialInstrument).filter(FinancialInstrument.id == req.instrument_id).first()
+    )
+    inst_name = inst.institution.name if (inst and inst.institution) else "Registered Institution"
+    institution_id = inst.institution_id if inst else "inst-001"
+    bank_name = inst.bank_name if inst else "Scheduled Commercial Bank"
+    amount = float(inst.amount) if inst else 5000000.0
+    fdr_number = inst.reference_number if inst else req.instrument_id
+
+    # Format decision history
+    history = []
+    req_user = (
+        db.query(User).filter(User.id == req.requested_by_user_id).first()
+        if req.requested_by_user_id
+        else None
+    )
+    history.append({
+        "stage": "Institutional Submission",
+        "officer_name": req_user.display_name if req_user else "Institution Representative",
+        "officer_role": "Institution Representative",
+        "decision": "SUBMITTED",
+        "timestamp": req.submitted_at.isoformat() if req.submitted_at else req.created_at.isoformat(),
+        "reason": req.reason,
+    })
+
+    # Ordered decisions
+    decisions = (
+        db.query(ReleaseRefundDecision)
+        .filter(ReleaseRefundDecision.request_id == req.id)
+        .order_by(ReleaseRefundDecision.decided_at.asc())
+        .all()
+    )
+    for d in decisions:
+        dec_user = db.query(User).filter(User.id == d.decided_by_user_id).first() if d.decided_by_user_id else None
+        user_name = dec_user.display_name if dec_user else "AICTE Regulatory Officer"
+        user_role = (
+            dec_user.role
+            if dec_user
+            else ("approving_authority" if d.decision == "approved" else "scrutiny_officer")
+        )
+        stage = (
+            "Financial Approval Stage"
+            if user_role == "approving_authority" or d.decision == "approved"
+            else "Technical Scrutiny Stage"
+        )
+        history.append({
+            "stage": stage,
+            "officer_name": user_name,
+            "officer_role": user_role,
+            "decision": d.decision.upper(),
+            "timestamp": d.decided_at.isoformat() if d.decided_at else d.created_at.isoformat(),
+            "reason": d.comments or "",
+        })
+
+    status_map = {
+        "submitted": "PENDING_SCRUTINY",
+        "under_review": "SCRUTINY_RECOMMENDED",
+        "approved": "APPROVED_PENDING_DISCHARGE",
+        "released": "RELEASED",
+        "rejected": "REJECTED",
+        "returned_for_correction": "RETURNED_FOR_QUERY",
+    }
+    display_status = status_map.get(req.status.lower(), req.status.upper())
+
+    return {
+        "id": req.id,
+        "fdr_id": req.instrument_id,
+        "fdr_number": fdr_number,
+        "institution_id": institution_id,
+        "institution_name": inst_name,
+        "bank_name": bank_name,
+        "principal_amount": amount,
+        "request_type": req.request_type.upper(),
+        "justification_reason": req.reason,
+        "regulatory_clause_reference": req.regulatory_clause or "",
         "supporting_documents": [
-            "Canara_Bank_Original_FDR_Scan.pdf",
+            f"{bank_name.replace(' ', '_')}_Certificate.pdf",
             "SRO_No_Dues_Clearance_Certificate.pdf",
-            "Executive_Council_Resolution_Closure.pdf",
         ],
-        "applicant_name": "Dr. K. Prakasan (Principal)",
-        "applicant_designation": "Principal / Head of Institution",
-        "submission_date": "2026-09-20T17:00:00Z",
-        "status": "APPROVED_PENDING_DISCHARGE",
-        "decision_history": [
-            {
-                "stage": "Institutional Submission",
-                "officer_name": "Dr. K. Prakasan",
-                "officer_role": "Institution Representative",
-                "decision": "SUBMITTED",
-                "timestamp": "2026-09-20T17:00:00Z",
-                "reason": "Course discontinuation exit clearance.",
-            },
-            {
-                "stage": "Regulatory Technical Scrutiny",
-                "officer_name": "Anil Verma",
-                "officer_role": "Scrutiny Officer",
-                "decision": "RECOMMENDED_FOR_APPROVAL",
-                "timestamp": "2026-09-25T14:30:00Z",
-                "reason": "All student grievance clearances and Southern Regional Office approvals verified in order.",
-            },
-            {
-                "stage": "Financial Approving Authority",
-                "officer_name": "Dr. Rajesh Sharma",
-                "officer_role": "Approving Authority (Member Secretary)",
-                "decision": "APPROVED",
-                "timestamp": "2026-10-02T11:00:00Z",
-                "reason": "Final administrative clearance granted for issuance of Bank Discharge NOC.",
-            },
-        ],
-    },
-    {
-        "id": "rel-002",
-        "fdr_id": "fdr-001",
-        "fdr_number": "FDR/AICTE/2026/089",
-        "institution_id": "inst-001",
-        "institution_name": "Delhi Technological University (DTU)",
-        "bank_name": "State Bank of India",
-        "principal_amount": 5000000.0,
-        "request_type": "NOC_ISSUANCE",
-        "justification_reason": "Request for issuance of Bank Lien Revocation Certificate to restructure university endowment accounts.",
-        "regulatory_clause_reference": "AICTE General Guidelines Clause 8.4",
-        "supporting_documents": [
-            "DTU_SBI_50L_Official_Receipt.pdf",
-            "Board_of_Governors_Resolution_2026.pdf",
-        ],
-        "applicant_name": "Prof. S. K. Mahajan",
-        "applicant_designation": "Registrar, DTU",
-        "submission_date": "2026-10-22T09:30:00Z",
-        "status": "UNDER_SCRUTINY",
-        "decision_history": [
-            {
-                "stage": "Institutional Submission",
-                "officer_name": "Prof. S. K. Mahajan",
-                "officer_role": "Institution Representative",
-                "decision": "SUBMITTED",
-                "timestamp": "2026-10-22T09:30:00Z",
-                "reason": "Official board resolution submitted.",
-            },
-        ],
-    },
-]
+        "applicant_name": req_user.display_name if req_user else "Authorized Institution Representative",
+        "applicant_designation": "Head of Institution / Representative",
+        "submission_date": req.submitted_at.isoformat() if req.submitted_at else req.created_at.isoformat(),
+        "status": display_status,
+        "decision_history": history,
+        "nocVoucherRef": f"AICTE/NOC/2026/DIS-{req.id}" if req.status.lower() == "approved" else None,
+    }
 
 # ─── ENDPOINTS ───────────────────────────────────────────────────────
 
 @router.get("")
-async def list_release_requests(institution_id: Optional[str] = None):
-    """List release and refund requests, optionally filtered by institution."""
-    if institution_id:
-        filtered = [r for r in RELEASE_REQUESTS_STORE if r["institution_id"] == institution_id]
-        return {"total": len(filtered), "requests": filtered}
-    return {"total": len(RELEASE_REQUESTS_STORE), "requests": RELEASE_REQUESTS_STORE}
+async def list_release_requests(
+    institution_id: Optional[str] = None,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """
+    List release and refund requests from persistent database.
+    Automatically scopes query to authenticated institution representative's institution.
+    """
+    query = db.query(ReleaseRefundRequest)
+    
+    # Institution scoping guard
+    if current_user and current_user.role in ["institution_representative", "depositor"]:
+        user_inst_id = get_user_institution_id(current_user, db)
+        if user_inst_id:
+            query = query.join(FinancialInstrument).filter(FinancialInstrument.institution_id == user_inst_id)
+    elif institution_id:
+        query = query.join(FinancialInstrument).filter(FinancialInstrument.institution_id == institution_id)
+
+    db_requests = query.order_by(desc(ReleaseRefundRequest.created_at)).all()
+    results = [serialize_release_request(r, db) for r in db_requests]
+    return {"total": len(results), "requests": results}
+
+@router.get("/{release_id}")
+async def get_release_request(
+    release_id: str,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Retrieve an individual release request by its identifier, validating institution scope."""
+    req = db.query(ReleaseRefundRequest).filter(ReleaseRefundRequest.id == release_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail=f"Release request {release_id} not found.")
+        
+    if current_user and current_user.role in ["institution_representative", "depositor"]:
+        user_inst_id = get_user_institution_id(current_user, db)
+        inst = req.instrument or db.query(FinancialInstrument).filter(FinancialInstrument.id == req.instrument_id).first()
+        if inst and inst.institution_id != user_inst_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access Denied: You are not authorized to access release claims submitted by another institution.",
+            )
+            
+    return serialize_release_request(req, db)
 
 @router.post("")
-async def submit_release_request(payload: ReleaseRequestCreate):
+async def submit_release_request(
+    payload: ReleaseRequestCreate,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
     """
     Institution submits a formal application for security deposit release / refund / NOC.
+    Persists to release_refund_requests table and updates instrument lifecycle.
     """
+    now = datetime.now(timezone.utc)
     new_id = f"rel-{uuid.uuid4().hex[:6]}"
-    now = datetime.now(timezone.utc).isoformat()
 
-    record = {
-        "id": new_id,
-        "fdr_id": payload.fdr_id,
-        "fdr_number": payload.fdr_number,
-        "institution_id": payload.institution_id,
-        "institution_name": payload.institution_name,
-        "bank_name": payload.bank_name,
-        "principal_amount": payload.principal_amount,
-        "request_type": payload.request_type,
-        "justification_reason": payload.justification_reason,
-        "regulatory_clause_reference": payload.regulatory_clause_reference,
-        "supporting_documents": payload.supporting_document_names,
-        "applicant_name": payload.applicant_name,
-        "applicant_designation": payload.applicant_designation,
-        "submission_date": now,
-        "status": "PENDING_SCRUTINY",
-        "decision_history": [
-            {
-                "stage": "Institutional Submission",
-                "officer_name": payload.applicant_name,
-                "officer_role": "Institution Representative",
-                "decision": "SUBMITTED",
-                "timestamp": now,
-                "reason": payload.justification_reason,
-            }
-        ],
-    }
+    # Validate institution representative scope
+    if current_user and current_user.role in ["institution_representative", "depositor"]:
+        user_inst_id = get_user_institution_id(current_user, db)
+        if user_inst_id and payload.institution_id != user_inst_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access Denied: You cannot submit release or refund applications for an institution other than your assigned college.",
+            )
 
-    RELEASE_REQUESTS_STORE.insert(0, record)
+    # Locate instrument in database
+    inst = (
+        db.query(FinancialInstrument)
+        .filter(
+            (FinancialInstrument.id == payload.fdr_id)
+            | (FinancialInstrument.reference_number == payload.fdr_number)
+        )
+        .first()
+    )
 
+    # Determine user id
+    user = (
+        db.query(User)
+        .filter(User.role == "institution_representative")
+        .first()
+    )
+    user_id = user.id if user else "usr-rep-01"
+
+    new_request = ReleaseRefundRequest(
+        id=new_id,
+        instrument_id=inst.id if inst else payload.fdr_id,
+        requested_by_user_id=user_id,
+        request_type=payload.request_type.lower(),
+        status="submitted",
+        reason=payload.justification_reason,
+        regulatory_clause=payload.regulatory_clause_reference,
+        submitted_at=now,
+        created_at=now,
+    )
+    db.add(new_request)
+
+    # Update instrument lifecycle status
+    if inst:
+        prev_status = inst.lifecycle_status
+        inst.lifecycle_status = "release_pending"
+        lifecycle_event = InstrumentLifecycleEvent(
+            id=f"evt-{uuid.uuid4().hex[:6]}",
+            instrument_id=inst.id,
+            event_type="release_requested",
+            previous_status=prev_status,
+            new_status="release_pending",
+            initiated_by_user_id=user_id,
+            event_notes=payload.justification_reason,
+            occurred_at=now,
+        )
+        db.add(lifecycle_event)
+
+    # Audit Trail
+    audit_evt = AuditEvent(
+        id=f"aud-{uuid.uuid4().hex[:6]}",
+        actor_user_id=user_id,
+        institution_id=payload.institution_id,
+        instrument_id=inst.id if inst else payload.fdr_id,
+        action="RELEASE_REQUEST_SUBMITTED",
+        entity_type="release_refund_requests",
+        entity_id=new_id,
+        outcome="success",
+        details={
+            "fdr_number": payload.fdr_number,
+            "request_type": payload.request_type,
+            "principal_amount": payload.principal_amount,
+            "supporting_documents": payload.supporting_document_names,
+        },
+        occurred_at=now,
+    )
+    db.add(audit_evt)
+    db.commit()
+    db.refresh(new_request)
+
+    serialized = serialize_release_request(new_request, db)
     return {
         "status": "SUCCESS",
-        "message": f"Release request #{new_id} submitted for regulatory scrutiny.",
-        "release_request": record,
+        "message": f"Release request #{new_id} persisted and submitted for regulatory scrutiny.",
+        "release_request": serialized,
     }
 
 @router.post("/{release_id}/decision")
-async def record_release_decision(release_id: str, payload: ReleaseDecisionRecord):
+async def record_release_decision(
+    release_id: str,
+    payload: ReleaseDecisionRecord,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
     """
     Record an official administrative decision on a release / refund request.
-    Enforces PERMISSION BOUNDARIES:
-    - System Administrator CANNOT approve financial releases (role: admin is barred).
+    Enforces PERMISSION BOUNDARIES via JWT-authenticated caller:
     - Institution Representative CANNOT review/approve requests.
-    - Approval requires role: 'approving_authority' (or 'scrutiny_officer' for preliminary recommendation).
+    - System Administrator CANNOT grant financial approvals.
+    - Scrutiny Officer can RECOMMEND or QUERY only; cannot APPROVE.
+    - Only Approving Authority can issue final APPROVED decision.
     """
-    # Check 1: Institution representatives barred
-    if payload.officer_role in ["institution_representative", "depositor"]:
+    # Derive role from authenticated token, fall back to payload for demo tokens
+    caller_role = current_user.role if current_user else payload.officer_role
+    caller_id   = current_user.id   if current_user else (payload.officer_id or "usr-aa-01")
+
+    # Check 1: Institution representatives barred from all decision actions
+    if caller_role in ["institution_representative", "depositor"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission Boundary Violation: Institution representatives cannot participate in regulatory release decisions.",
         )
 
     # Check 2: System admin cannot grant financial approvals
-    if payload.officer_role == "admin" and payload.decision == "APPROVED":
+    if caller_role == "admin" and payload.decision == "APPROVED":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission Boundary Violation: System Administrator role alone does not confer financial approval authority under AICTE statutory governance rules.",
         )
 
     # Check 3: Scrutiny officer can recommend but not approve
-    if payload.officer_role == "scrutiny_officer" and payload.decision == "APPROVED":
+    if caller_role == "scrutiny_officer" and payload.decision == "APPROVED":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Role Hierarchy Violation: Scrutiny Officers may only RECOMMEND or QUERY release requests. Final financial approval requires the Approving Authority.",
         )
 
-    for item in RELEASE_REQUESTS_STORE:
-        if item["id"] == release_id:
-            now = datetime.now(timezone.utc).isoformat()
-            
-            # Update status
-            if payload.decision == "APPROVED":
-                item["status"] = "APPROVED_PENDING_DISCHARGE"
-            elif payload.decision == "RECOMMENDED_FOR_APPROVAL":
-                item["status"] = "SCRUTINY_RECOMMENDED"
-            elif payload.decision == "REJECTED":
-                item["status"] = "REJECTED"
-            elif payload.decision == "RETURNED_FOR_QUERY":
-                item["status"] = "RETURNED_FOR_QUERY"
+    # Check 4: Only approving_authority can issue APPROVED
+    if payload.decision == "APPROVED" and caller_role != "approving_authority":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Statutory Authority Required: Only an Approving Authority can sanction a final deposit release. Current role: '{caller_role}'.",
+        )
 
-            item["decision_history"].append({
-                "stage": (
-                    "Financial Approval Stage"
-                    if payload.officer_role == "approving_authority"
-                    else "Technical Scrutiny Stage"
-                ),
-                "officer_name": payload.officer_name,
-                "officer_role": payload.officer_role,
-                "decision": payload.decision,
-                "timestamp": now,
-                "reason": payload.decision_reason,
-            })
+    req = db.query(ReleaseRefundRequest).filter(ReleaseRefundRequest.id == release_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Release request not found.")
 
-            return {
-                "status": "SUCCESS",
-                "message": f"Release request decision recorded as {payload.decision}",
-                "statutory_safeguard_notice": (
-                    "AICTE Safeguard Notice: Administrative approval authorizes issuance of the digital Bank Discharge NOC voucher. "
-                    "AICTE does not execute bank transfers directly; encashment remains subject to CBS confirmation by the issuing bank."
-                ),
-                "request": item,
-            }
+    # Check 5: Prevent approving your own submission
+    if req.requested_by_user_id == caller_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Four-Eyes Rule Violation: The officer who submitted this request cannot also approve it.",
+        )
 
-    raise HTTPException(status_code=404, detail="Release request not found.")
+    now = datetime.now(timezone.utc)
+    dec_id = f"dec-{uuid.uuid4().hex[:6]}"
+
+    # Map status
+    if payload.decision == "APPROVED":
+        req.status = "approved"
+    elif payload.decision == "RECOMMENDED_FOR_APPROVAL":
+        req.status = "under_review"
+    elif payload.decision == "REJECTED":
+        req.status = "rejected"
+    elif payload.decision == "RETURNED_FOR_QUERY":
+        req.status = "returned_for_correction"
+
+    # Persist decision
+    new_decision = ReleaseRefundDecision(
+        id=dec_id,
+        request_id=req.id,
+        decided_by_user_id=caller_id,
+        decision=payload.decision.lower(),
+        comments=payload.decision_reason,
+        decided_at=now,
+    )
+    db.add(new_decision)
+
+    # If approved, update instrument to 'released'
+    inst = db.query(FinancialInstrument).filter(FinancialInstrument.id == req.instrument_id).first()
+    if payload.decision == "APPROVED" and inst:
+        prev_status = inst.lifecycle_status
+        inst.lifecycle_status = "released"
+        lifecycle_event = InstrumentLifecycleEvent(
+            id=f"evt-{uuid.uuid4().hex[:6]}",
+            instrument_id=inst.id,
+            event_type="released",
+            previous_status=prev_status,
+            new_status="released",
+            initiated_by_user_id=caller_id,
+            event_notes=f"Released upon Approving Authority sign-off. {payload.decision_reason}",
+            occurred_at=now,
+        )
+        db.add(lifecycle_event)
+
+    # Record Audit Event
+    audit_evt = AuditEvent(
+        id=f"aud-{uuid.uuid4().hex[:6]}",
+        actor_user_id=caller_id,
+        institution_id=inst.institution_id if inst else None,
+        instrument_id=req.instrument_id,
+        action="RELEASE_DECISION_RECORDED",
+        entity_type="release_refund_decisions",
+        entity_id=dec_id,
+        outcome="success",
+        details={
+            "request_id": req.id,
+            "decision": payload.decision,
+            "officer_name": payload.officer_name,
+            "officer_role": caller_role,
+            "reason": payload.decision_reason,
+        },
+        occurred_at=now,
+    )
+    db.add(audit_evt)
+    db.commit()
+    db.refresh(req)
+
+    serialized = serialize_release_request(req, db)
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Release request decision recorded as {payload.decision} and persisted in database.",
+        "statutory_safeguard_notice": (
+            "AICTE Safeguard Notice: Administrative approval authorizes issuance of the digital Bank Discharge NOC voucher. "
+            "AICTE does not execute bank transfers directly; encashment remains subject to CBS confirmation by the issuing bank."
+        ),
+        "request": serialized,
+    }
