@@ -218,9 +218,19 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
 
   // ─── Notifications from backend (Part 5) ─────────────────────────────────
   const backendNotifications = financialStatus?.notifications ?? [];
-  // Filter out any statement missing banners — weekly statements & tallying belong exclusively on the Approver Dashboard
+  // Filter out any statement missing/query banners — weekly statement auditing and tallying
+  // belong exclusively on the Approver Dashboard. These types must never surface on the
+  // institution representative portal regardless of backend state.
+  const INSTITUTION_SUPPRESSED_TYPES = new Set([
+    "MISSING_STATEMENT",
+    "MISSING_WEEKLY_STATEMENT",
+    "STATEMENT_QUERY",
+    "STATEMENT_MISSING",
+  ]);
   const criticalNotifications = backendNotifications.filter(
-    (n) => (n.severity === "CRITICAL" || n.action_required) && n.type !== "MISSING_STATEMENT" && n.type !== "STATEMENT_QUERY"
+    (n) =>
+      (n.severity === "CRITICAL" || n.action_required) &&
+      !INSTITUTION_SUPPRESSED_TYPES.has(n.type)
   );
 
   // ─── TABS ─────────────────────────────────────────────────────────────────
@@ -275,16 +285,27 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
           {criticalNotifications.slice(0, 3).map((n, i) => (
             <Alert key={i} variant={n.severity === "CRITICAL" ? "error" : "warning"} className="border-l-4">
               <div className="flex items-start justify-between gap-3 w-full">
-                <div>
-                  <p className="text-xs font-bold">{n.title}</p>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                    {n.type === "STATUTORY_NOTICE" && (
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-black bg-red-700 text-white uppercase tracking-wide shrink-0">
+                        Statutory Notice
+                      </span>
+                    )}
+                    <p className="text-xs font-bold">{n.title}</p>
+                  </div>
                   <p className="text-xs mt-0.5 opacity-80">{n.body}</p>
                 </div>
                 {n.action_required && (
                   <Button size="sm" variant="primary" className="text-xs shrink-0"
                     onClick={() => {
-                      if (n.type === "CLARIFICATION_REQUIRED") setActiveTab("financial_status");
-                      else if (n.type === "REFUND_DECISION") setActiveTab("refund_requests");
-                      else setActiveTab("overview");
+                      if (n.type === "CLARIFICATION_REQUIRED" || n.type === "STATUTORY_NOTICE") {
+                        setActiveTab("financial_status");
+                      } else if (n.type === "REFUND_DECISION") {
+                        setActiveTab("refund_requests");
+                      } else {
+                        setActiveTab("overview");
+                      }
                     }}>
                     Take Action
                   </Button>

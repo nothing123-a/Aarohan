@@ -275,6 +275,18 @@ async def get_institution_financial_status(
     # so missing statement nag banners are omitted from the institutional portal.
     notifications = []
 
+    # Statutory Inquiry Notices issued by Approving Authority on Statement / Financial Scrutiny
+    for a in open_alerts:
+        if a.alert_type in ("STATUTORY_NOTICE", "QUERY_NOTICE"):
+            notifications.append({
+                "type": "STATUTORY_NOTICE",
+                "severity": "CRITICAL",
+                "title": a.title,
+                "body": a.description,
+                "action_required": True,
+                "alert_id": a.id,
+            })
+
     # Clarification requests
     for cl in clarification_requests[:3]:
         notifications.append({

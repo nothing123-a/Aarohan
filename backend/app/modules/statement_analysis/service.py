@@ -377,6 +377,19 @@ def record_statement_review(
         stmt.status = "rejected"
     elif norm_decision == "QUERY_RAISED":
         stmt.status = "requires_review"
+        notice_ref = f"NOTICE/AICTE/STMT/{now.strftime('%Y%m')}/{uuid.uuid4().hex[:6].upper()}"
+        alert = FinancialAlert(
+            id=f"alert-notice-{uuid.uuid4().hex[:8]}",
+            institution_id=stmt.institution_id,
+            statement_id=stmt.id,
+            alert_type="STATUTORY_NOTICE",
+            severity="CRITICAL",
+            title=f"Statutory Inquiry Notice {notice_ref} — Bank Statement Query ({stmt.bank_name} A/C {stmt.account_number})",
+            description=f"{notes} [Response required within 7 business days]",
+            status="OPEN",
+            created_at=now,
+        )
+        db.add(alert)
 
     # Audit event
     db.add(AuditEvent(
