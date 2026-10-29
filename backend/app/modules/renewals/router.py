@@ -126,6 +126,10 @@ def serialize_renewal_record(inst: FinancialInstrument, db: Session) -> dict:
         "new_maturity_date": inst.maturity_date.isoformat() if inst.maturity_date else "",
         "tenure_months": inst.tenure_months or 36,
         "supporting_document": f"{inst.bank_name.replace(' ', '_')}_Lien_Rollover_Letter.pdf",
+        "relationship": {
+            "predecessor_instrument_id": inst.predecessor_instrument_id or (predecessor.id if predecessor else None),
+            "successor_instrument_id": inst.id,
+        },
     }
 
 # ─── ENDPOINTS ───────────────────────────────────────────────────────
@@ -242,6 +246,7 @@ async def submit_renewal_replacement(
         created_at=now,
     )
     db.add(replacement)
+    db.flush()
 
     # Predecessor lifecycle event
     old_pred_status = predecessor.lifecycle_status

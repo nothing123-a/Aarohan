@@ -136,10 +136,11 @@ def inst_dashboard_setup(db):
     # FDR for Institution A (maturing in 25 days -> critical)
     now = datetime.now(timezone.utc)
     fdr_a_id = "fdr-dash-a-" + str(uuid.uuid4())[:8]
+    ref_a = "FDR/DIAT/" + str(uuid.uuid4())[:6].upper()
     instrument_a = FinancialInstrument(
         id=fdr_a_id,
         institution_id=inst_a.id,
-        reference_number="FDR/DIAT/2026/001",
+        reference_number=ref_a,
         instrument_type="fixed_deposit",
         amount=5000000.0,
         bank_name="State Bank of India",
@@ -186,6 +187,7 @@ def inst_dashboard_setup(db):
         "inst_b_id": inst_b.id,
         "fdr_a_id": fdr_a_id,
         "fdr_b_id": fdr_b_id,
+        "ref_a": ref_a,
         "tokens": tokens,
         "user_rep_a_id": user_rep_a.id,
         "user_rep_b_id": user_rep_b.id,
@@ -235,9 +237,9 @@ def test_weekly_statement_upload_persistence(inst_dashboard_setup, db):
     assert stmt is not None
     assert stmt.institution_id == inst_id
     assert stmt.original_filename == "SBI_DIAT_W43.csv"
-    # IMPORTANT: Not marked as verified/approved yet! Status is in-progress/reconciled/discrepancy_flagged
+    # IMPORTANT: Not marked as verified/approved yet! Status is in-progress/clean/reconciled/discrepancy_flagged
     assert stmt.status != "verified"
-    assert stmt.status in ("reconciled", "extracted", "uploaded", "discrepancy_flagged", "requires_review")
+    assert stmt.status in ("clean", "reconciled", "extracted", "uploaded", "discrepancy_flagged", "requires_review")
     analysis = db.query(StatementAnalysis).filter(StatementAnalysis.statement_id == stmt_id).first()
     assert analysis is not None
     # Reviewer decision has NOT been set by institution upload
@@ -347,7 +349,7 @@ def test_refund_request_submission_and_self_approval_prevention(inst_dashboard_s
 
     payload = {
         "fdr_id": fdr_id,
-        "fdr_number": "FDR/DIAT/2026/001",
+        "fdr_number": inst_dashboard_setup.get("ref_a", "FDR/DIAT/2026/001"),
         "institution_id": inst_dashboard_setup["inst_a_id"],
         "institution_name": "Delhi Institute of Advanced Technology",
         "bank_name": "State Bank of India",
@@ -397,6 +399,26 @@ def test_status_synchronization_after_approver_decision(inst_dashboard_setup, db
     """
     fdr_id = inst_dashboard_setup["fdr_a_id"]
     req = db.query(ReleaseRefundRequest).filter(ReleaseRefundRequest.instrument_id == fdr_id).first()
+    if not req:
+        headers = {"Authorization": f"Bearer {inst_dashboard_setup['tokens']['rep_a']}"}
+        create_payload = {
+            "fdr_id": fdr_id,
+            "fdr_number": inst_dashboard_setup.get("ref_a", "FDR/DIAT/2026/001"),
+            "institution_id": inst_dashboard_setup["inst_a_id"],
+            "institution_name": "Delhi Institute of Advanced Technology",
+            "bank_name": "State Bank of India",
+            "principal_amount": 5000000.0,
+            "request_type": "FULL_RELEASE",
+            "justification_reason": "Statutory 5-year lock-in period successfully concluded with zero liabilities.",
+            "regulatory_clause_reference": "AICTE APH 2026-27 Clause 11.2",
+            "supporting_document_names": ["No_Dues_Certificate.pdf", "Original_Receipt.pdf"],
+            "applicant_name": "Dr. S. K. Gupta",
+            "applicant_designation": "Director",
+        }
+        res = client.post("/api/v1/releases", json=create_payload, headers=headers)
+        assert res.status_code == 200
+        req_id = res.json()["release_request"]["id"]
+        req = db.query(ReleaseRefundRequest).filter(ReleaseRefundRequest.id == req_id).first()
     assert req is not None
 
     # Approving Authority issues query

@@ -1,9 +1,8 @@
-import httpx
-
-BASE_URL = "http://localhost:8000/api/v1"
+from fastapi.testclient import TestClient
+from app.main import app
 
 def test_full_lifecycle():
-    client = httpx.Client(base_url=BASE_URL, timeout=10.0)
+    client = TestClient(app, base_url="http://testserver/api/v1")
 
     # 1. Scrutiny Queue
     print("1. Fetching Scrutiny Queue...")
