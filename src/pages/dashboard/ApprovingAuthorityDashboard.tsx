@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { useState, useMemo, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   ShieldCheck,
@@ -47,8 +47,33 @@ interface ApprovingAuthorityDashboardProps {
 }
 
 export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboardProps) {
-  // Primary Executive Workspace Tab
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"STAGE2_FINANCIAL" | "WEEKLY_STATEMENTS" | "RELEASE_CLAIMS">("STAGE2_FINANCIAL");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTab = searchParams.get("tab")?.toLowerCase();
+
+  // Primary Executive Workspace Tab (supports direct linking via ?tab=refunds or ?tab=release_claims)
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"STAGE2_FINANCIAL" | "WEEKLY_STATEMENTS" | "RELEASE_CLAIMS">(
+    urlTab === "refunds" || urlTab === "refund_requests" || urlTab === "release_claims" || urlTab === "releases" || urlTab === "claims"
+      ? "RELEASE_CLAIMS"
+      : urlTab === "statements" || urlTab === "weekly_statements"
+      ? "WEEKLY_STATEMENTS"
+      : "STAGE2_FINANCIAL"
+  );
+
+  useEffect(() => {
+    if (urlTab === "refunds" || urlTab === "refund_requests" || urlTab === "release_claims" || urlTab === "releases" || urlTab === "claims") {
+      setActiveWorkspaceTab("RELEASE_CLAIMS");
+    } else if (urlTab === "statements" || urlTab === "weekly_statements") {
+      setActiveWorkspaceTab("WEEKLY_STATEMENTS");
+    } else if (urlTab === "stage2" || urlTab === "verification") {
+      setActiveWorkspaceTab("STAGE2_FINANCIAL");
+    }
+  }, [urlTab]);
+
+  const switchWorkspaceTab = (tab: "STAGE2_FINANCIAL" | "WEEKLY_STATEMENTS" | "RELEASE_CLAIMS") => {
+    setActiveWorkspaceTab(tab);
+    const tabParam = tab === "RELEASE_CLAIMS" ? "refunds" : tab === "WEEKLY_STATEMENTS" ? "statements" : "stage2";
+    setSearchParams({ tab: tabParam }, { replace: true });
+  };
 
   // ─── WEEKLY BANK STATEMENT ANALYZER STATE ─────────────────────────────
   const [selectedStatementId, setSelectedStatementId] = useState<string | null>(null);
@@ -463,7 +488,13 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
     return liveCases.filter((c) => {
       if (categoryFilter === "PENDING") return c.status === "PENDING_APPROVAL";
       if (categoryFilter === "REFUND") {
-        return c.requestType === "PARTIAL_REFUND" || c.scrutinyFinding?.toLowerCase().includes("refund") || c.id.toLowerCase().includes("ref");
+        return (
+          c.requestType === "PARTIAL_REFUND" ||
+          c.requestType === "FULL_RELEASE" ||
+          c.requestType === "NOC_ISSUANCE" ||
+          c.scrutinyFinding?.toLowerCase().includes("refund") ||
+          c.id.toLowerCase().includes("ref")
+        );
       }
       if (categoryFilter === "RELEASE") {
         return c.requestType === "FULL_RELEASE" || c.requestType === "NOC_ISSUANCE";
@@ -594,11 +625,11 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
       {feedbackSuccess && <Alert variant="success">{feedbackSuccess}</Alert>}
 
       {/* Primary Workspace Tab Switcher */}
-      <div className="flex border-b border-slate-200 text-xs font-semibold">
+      <div className="flex border-b border-slate-200 text-xs font-semibold overflow-x-auto">
         <button
           type="button"
-          onClick={() => setActiveWorkspaceTab("STAGE2_FINANCIAL")}
-          className={`pb-2.5 px-4 font-bold border-b-2 flex items-center gap-2 transition-all ${
+          onClick={() => switchWorkspaceTab("STAGE2_FINANCIAL")}
+          className={`pb-2.5 px-4 font-bold border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
             activeWorkspaceTab === "STAGE2_FINANCIAL"
               ? "border-purple-600 text-purple-800"
               : "border-transparent text-slate-500 hover:text-slate-800"
@@ -612,8 +643,8 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
         </button>
         <button
           type="button"
-          onClick={() => setActiveWorkspaceTab("WEEKLY_STATEMENTS")}
-          className={`pb-2.5 px-4 font-bold border-b-2 flex items-center gap-2 transition-all ${
+          onClick={() => switchWorkspaceTab("WEEKLY_STATEMENTS")}
+          className={`pb-2.5 px-4 font-bold border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
             activeWorkspaceTab === "WEEKLY_STATEMENTS"
               ? "border-purple-600 text-purple-800"
               : "border-transparent text-slate-500 hover:text-slate-800"
@@ -632,8 +663,8 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
         </button>
         <button
           type="button"
-          onClick={() => setActiveWorkspaceTab("RELEASE_CLAIMS")}
-          className={`pb-2.5 px-4 font-bold border-b-2 flex items-center gap-2 transition-all ${
+          onClick={() => switchWorkspaceTab("RELEASE_CLAIMS")}
+          className={`pb-2.5 px-4 font-bold border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
             activeWorkspaceTab === "RELEASE_CLAIMS"
               ? "border-purple-600 text-purple-800"
               : "border-transparent text-slate-500 hover:text-slate-800"
@@ -646,8 +677,17 @@ export function ApprovingAuthorityDashboard({ user }: ApprovingAuthorityDashboar
           </span>
         </button>
         <Link
+          to="/refund-requests"
+          className="pb-2.5 px-3 font-semibold text-emerald-700 hover:text-emerald-900 flex items-center gap-1.5 transition-all text-xs border-b-2 border-transparent hover:border-emerald-500 whitespace-nowrap"
+          title="Open dedicated Fullscreen Refund & Release Requests Portal"
+        >
+          <Coins size={14} className="text-emerald-600" />
+          <span>Full Refund Portal</span>
+          <ArrowUpRight size={12} className="text-emerald-600" />
+        </Link>
+        <Link
           to="/account-aggregator"
-          className="pb-2.5 px-4 font-bold border-b-2 border-transparent text-teal-700 hover:text-teal-900 flex items-center gap-2 transition-all ml-auto hover:border-teal-400"
+          className="pb-2.5 px-4 font-bold border-b-2 border-transparent text-teal-700 hover:text-teal-900 flex items-center gap-2 transition-all ml-auto hover:border-teal-400 whitespace-nowrap"
         >
           <Layers size={16} className="text-teal-600" />
           <span>Account Aggregator (AA) Feeds</span>
