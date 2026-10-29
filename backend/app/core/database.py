@@ -14,6 +14,12 @@ Base = declarative_base()
 
 def create_db_engine():
     db_url = settings.DATABASE_URL
+    # Normalize postgres url prefix for SQLAlchemy 2.x psycopg2 driver
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
     if db_url.startswith("sqlite"):
         return create_engine(
             db_url,
@@ -22,22 +28,22 @@ def create_db_engine():
         )
 
     try:
-        if db_url.startswith("postgresql"):
-            # Test connectivity quickly
-            test_engine = create_engine(
+        if "postgresql" in db_url:
+            # 30s timeout accommodates TLS handshakes & serverless cloud wake-ups (e.g. Supabase, Neon)
+            pg_engine = create_engine(
                 db_url,
-                connect_args={"connect_timeout": 3},
+                connect_args={"connect_timeout": 30},
                 pool_pre_ping=True,
                 pool_size=10,
                 max_overflow=20,
             )
-            with test_engine.connect() as conn:
-                logger.info("Successfully connected to PostgreSQL database.")
-            return test_engine
+            with pg_engine.connect() as conn:
+                logger.info(f"Successfully connected to cloud PostgreSQL database at {pg_engine.url.host}.")
+            return pg_engine
     except Exception as e:
         logger.warning(
-            f"PostgreSQL connection to {db_url} failed ({e}). "
-            "Falling back to local SQLite database 'fdr_smart.db' for continuous local operation."
+            f"PostgreSQL connection to cloud database encountered error ({e}). "
+            "Falling back to local SQLite database 'fdr_smart.db'."
         )
     
     # Fallback to SQLite with thread safety
