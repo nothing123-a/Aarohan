@@ -74,14 +74,14 @@ export default function App() {
                 <Route element={<ProtectedRoute allowedRoles={["institution_representative", "depositor"]} />}>
                   <Route path="/fdr/new" element={<FDRSubmitPage />} />
                   <Route path="/renewals" element={<RenewalsPage />} />
-                  <Route path="/refund-requests" element={<ReleaseRequestsPage />} />
                 </Route>
 
                 {/* FDR detail — all authenticated roles */}
                 <Route path="/fdr/:id" element={<FDRDetailPage />} />
 
-                {/* Release/Refund list — all roles (backend enforces institution isolation) */}
+                {/* Release & Refund Claims — all roles (backend enforces institution isolation & permissions) */}
                 <Route path="/release-requests" element={<ReleaseRequestsPage />} />
+                <Route path="/refund-requests" element={<ReleaseRequestsPage />} />
 
                 {/* Verification workbench — scrutiny officers and approving authority only */}
                 <Route element={<ProtectedRoute allowedRoles={["scrutiny_officer", "officer", "verifier", "approving_authority"]} />}>

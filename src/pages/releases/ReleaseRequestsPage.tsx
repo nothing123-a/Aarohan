@@ -268,7 +268,13 @@ export default function ReleaseRequestsPage() {
       list = list.filter((r) => r.institutionId === user.institutionId);
     }
     if (activeTab === "REFUND") {
-      return list.filter((r) => r.requestType === "PARTIAL_REFUND");
+      // In the dedicated refund view, include all institutional refund and release claims
+      return list.filter(
+        (r) =>
+          r.requestType === "PARTIAL_REFUND" ||
+          r.requestType === "FULL_RELEASE" ||
+          r.requestType === "NOC_ISSUANCE"
+      );
     }
     if (activeTab === "RELEASE") {
       return list.filter((r) => r.requestType === "FULL_RELEASE");
