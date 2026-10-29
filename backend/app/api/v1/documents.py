@@ -101,6 +101,35 @@ async def download_document(document_id: str, db: Session = Depends(get_db)):
         headers={"Cache-Control": "private, no-cache, no-store, must-revalidate"},
     )
 
+@router.post("/{document_id}/extract", response_model=dict)
+async def extract_document_details(document_id: str, db: Session = Depends(get_db)):
+    """
+    On-demand document extraction endpoint triggered by Scrutiny Officer.
+    Retrieves authorized document from private storage, runs PyMuPDF / RapidOCR,
+    extracts structured fields, computes genuine confidence, and persists the run in Supabase.
+    """
+    doc = get_document_metadata(document_id, db=db)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    file_path = get_document_file_path(document_id, db=db)
+    if not file_path or not file_path.exists():
+        raise HTTPException(status_code=404, detail="Document content file not found on disk.")
+
+    run = process_document_ocr(
+        document_id=doc.id,
+        file_path=file_path,
+        original_filename=doc.original_filename,
+        db=db,
+    )
+
+    return {
+        "success": True,
+        "message": "OCR document extraction completed successfully.",
+        "document": doc.model_dump(),
+        "extraction_run": run.model_dump(),
+    }
+
 @router.get("/{document_id}/extraction-run", response_model=Optional[DocumentExtractionRun])
 async def get_extraction_run(document_id: str, db: Session = Depends(get_db)):
     """Retrieves the latest OCR extraction run for this document."""

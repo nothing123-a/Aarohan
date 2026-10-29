@@ -1,6 +1,5 @@
 import { useAuth } from "@/context/AuthContext";
 import { InstitutionDashboard } from "./InstitutionDashboard";
-import { AdminDashboard } from "./AdminDashboard";
 import { ScrutinyOfficerDashboard } from "./ScrutinyOfficerDashboard";
 import { ApprovingAuthorityDashboard } from "./ApprovingAuthorityDashboard";
 import { PageLoader } from "@/components/shared/LoadingStates";
@@ -23,10 +22,8 @@ export default function DashboardPage() {
       return <ScrutinyOfficerDashboard user={user} />;
 
     case "approving_authority":
-      return <ApprovingAuthorityDashboard user={user} />;
-
     case "admin":
     default:
-      return <AdminDashboard user={user} />;
+      return <ApprovingAuthorityDashboard user={user} />;
   }
 }

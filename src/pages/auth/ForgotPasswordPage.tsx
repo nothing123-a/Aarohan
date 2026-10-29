@@ -38,7 +38,7 @@ export default function ForgotPasswordPage() {
           </div>
           <div>
             <h1 className="text-base font-extrabold text-slate-900 font-plus-jakarta">
-              FDR-SMART
+              Aarohan
             </h1>
             <p className="text-xs text-slate-400">
               AICTE Regulation Bureau Account Recovery

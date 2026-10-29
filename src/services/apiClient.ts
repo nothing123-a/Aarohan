@@ -48,7 +48,7 @@ apiClient.interceptors.response.use(
     } else if (error.code === "ECONNABORTED") {
       message = "Request timed out. Please verify your connection.";
     } else if (!error.response) {
-      message = "Network error: Unable to connect to FDR-SMART backend.";
+      message = "Network error: Unable to connect to Aarohan backend.";
     }
 
     if (status === 401) {

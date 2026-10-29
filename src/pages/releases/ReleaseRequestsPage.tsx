@@ -3,24 +3,22 @@ import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   FileCheck,
-  CheckCircle2,
-  Clock,
   Shield,
   Download,
   Check,
-  Plus,
   FileText,
-  ShieldAlert,
   Send,
   Coins,
   RefreshCw,
+  Calendar,
+  Sparkles,
+  ArrowRight,
+  Printer,
+  ShieldCheck,
 } from "lucide-react";
 import {
   Button,
   Card,
-  CardTitle,
-  CardDescription,
-  StatCard,
   Badge,
   Input,
   Select,
@@ -30,9 +28,10 @@ import {
 } from "@/components/ui";
 import { PageHeader } from "@/components/shared";
 import { useAuth } from "@/context/AuthContext";
-import { CENTRAL_FDR_RECORDS } from "@/data/centralDataset";
+import { CENTRAL_FDR_RECORDS, CENTRAL_APPROVAL_CASES, registerApprovalCase } from "@/data/centralDataset";
 import { formatCurrency, formatDate } from "@/utils";
 import { releaseService } from "@/services/fdrService";
+import { BankDischargeNocModal } from "@/components/shared/BankDischargeNocModal";
 
 export interface ReleaseDecisionHistoryItem {
   stage: string;
@@ -204,10 +203,23 @@ export default function ReleaseRequestsPage() {
   const [searchParams] = useSearchParams();
   const isDedicatedRefundRoute = location.pathname === "/refund-requests" || searchParams.get("tab")?.toLowerCase() === "refund";
 
+  const formatTimestamp = (dateStr?: string) => {
+    if (!dateStr) return "Recent";
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr.split("T")[0] || dateStr;
+      return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    } catch {
+      return dateStr.split("T")[0] || dateStr;
+    }
+  };
+
   // Tab state for dedicated Refund section
   const [activeTab, setActiveTab] = useState<"ALL" | "REFUND" | "RELEASE" | "NOC">(
     isDedicatedRefundRoute ? "REFUND" : "ALL"
   );
+
+  const [selectedNocRow, setSelectedNocRow] = useState<ReleaseRequestRecord | null>(null);
 
   useEffect(() => {
     if (isDedicatedRefundRoute) {
@@ -224,41 +236,107 @@ export default function ReleaseRequestsPage() {
     },
   });
 
-  // Merge live database records with local state
+  // Merge live database records with central approval cases and local state
   const effectiveReleaseList = useMemo(() => {
+    const list: ReleaseRequestRecord[] = [];
+    const seenIds = new Set<string>();
+
     if (apiResponse && apiResponse.length > 0) {
-      const dbRecords = apiResponse.map((r: any) => ({
-        id: r.id,
-        fdrId: r.fdr_id || r.fdrId,
-        fdrNumber: r.fdr_number || r.fdrNumber,
-        institutionId: r.institution_id || r.institutionId,
-        institutionName: r.institution_name || r.institutionName,
-        bankName: r.bank_name || r.bankName,
-        principalAmount: r.principal_amount || r.principalAmount,
-        requestType: (r.request_type || r.requestType || "FULL_RELEASE") as any,
-        justificationReason: r.justification_reason || r.justificationReason || r.reason,
-        regulatoryClause: r.regulatory_clause_reference || r.regulatoryClause,
-        submissionDate: r.submission_date || r.submissionDate || "2026-10-25 10:00 UTC",
-        supportingDocuments: r.supporting_documents || r.supportingDocuments || ["Document_Dossier.pdf"],
-        status: (r.status || "PENDING_SCRUTINY") as any,
-        applicantName: r.applicant_name || r.applicantName || "Institution Representative",
-        decisionHistory: r.decision_history?.map((d: any) => ({
+      for (const r of apiResponse) {
+        list.push({
+          id: r.id,
+          fdrId: r.fdr_id || r.fdrId,
+          fdrNumber: r.fdr_number || r.fdrNumber,
+          institutionId: r.institution_id || r.institutionId,
+          institutionName: r.institution_name || r.institutionName,
+          bankName: r.bank_name || r.bankName,
+          principalAmount: r.principal_amount || r.principalAmount,
+          requestType: (r.request_type || r.requestType || "FULL_RELEASE") as any,
+          justificationReason: r.justification_reason || r.justificationReason || r.reason,
+          regulatoryClause: r.regulatory_clause_reference || r.regulatoryClause,
+          submissionDate: r.submission_date || r.submissionDate || "2026-10-25 10:00 UTC",
+          supportingDocuments: r.supporting_documents || r.supportingDocuments || ["Document_Dossier.pdf"],
+          status: (r.status || "PENDING_SCRUTINY") as any,
+          applicantName: r.applicant_name || r.applicantName || "Institution Representative",
+          decisionHistory:
+            r.decision_history?.map((d: any) => ({
+              stage: d.stage,
+              officerName: d.officer_name || d.officerName,
+              officerRole: d.officer_role || d.officerRole,
+              decision: d.decision,
+              timestamp: d.timestamp,
+              remarks: d.reason || d.remarks || "",
+            })) || [],
+          nocVoucherRef:
+            r.nocVoucherRef || (r.status === "APPROVED_PENDING_DISCHARGE" ? `AICTE/NOC/2026/DIS-${r.id}` : undefined),
+        });
+        seenIds.add(r.id);
+      }
+    }
+
+    // Merge central approval cases (sync across authority and institution)
+    for (const c of CENTRAL_APPROVAL_CASES) {
+      const isApproved = c.status === "APPROVED" || c.status === "RELEASED" || c.status === "COMPLETED";
+      const mappedStatus = isApproved
+        ? ("APPROVED_PENDING_DISCHARGE" as const)
+        : c.status === "REJECTED"
+        ? ("REJECTED" as const)
+        : c.status === "RETURNED"
+        ? ("PENDING_SCRUTINY" as const)
+        : ("PENDING_APPROVAL" as const);
+
+      const nocRef =
+        c.nocVoucherRef ||
+        (isApproved ? `AICTE/NOC/2026/REL-${c.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase()}` : undefined);
+
+      const unified: ReleaseRequestRecord = {
+        id: c.id,
+        fdrId: c.fdrId,
+        fdrNumber: c.fdrNumber,
+        institutionId: c.institutionId,
+        institutionName: c.institutionName,
+        bankName: c.bankName,
+        principalAmount: c.principalAmount,
+        requestType: c.requestType as any,
+        justificationReason: c.scrutinyFinding,
+        regulatoryClause: c.regulatoryClause || "APH Clause 7.6 / 11.2",
+        submissionDate: c.requestedDate || "2026-10-29 10:00 UTC",
+        supportingDocuments: c.supportingDocuments.map((d) => d.name),
+        status: mappedStatus as any,
+        applicantName: c.applicantName || "Institution Representative",
+        decisionHistory: (c.previousDecisions || []).map((d) => ({
           stage: d.stage,
-          officerName: d.officer_name || d.officerName,
-          officerRole: d.officer_role || d.officerRole,
+          officerName: d.officer,
+          officerRole: "Approving Authority",
           decision: d.decision,
           timestamp: d.timestamp,
-          remarks: d.reason || d.remarks || "",
-        })) || [],
-        nocVoucherRef: r.nocVoucherRef || (r.status === "APPROVED_PENDING_DISCHARGE" ? `AICTE/NOC/2026/DIS-${r.id}` : undefined),
-      }));
+          remarks: d.remarks,
+        })),
+        nocVoucherRef: nocRef,
+      };
 
-      // Combine with any local-only optimistic records
-      const existingIds = new Set(dbRecords.map((d: any) => d.id));
-      const localOnly = releaseList.filter((l) => !existingIds.has(l.id));
-      return [...localOnly, ...dbRecords];
+      const existingIdx = list.findIndex((r) => r.id === c.id || r.fdrNumber === c.fdrNumber);
+      if (existingIdx !== -1) {
+        list[existingIdx] = {
+          ...list[existingIdx],
+          ...unified,
+          status: unified.status,
+          nocVoucherRef: unified.nocVoucherRef || list[existingIdx].nocVoucherRef,
+        };
+      } else {
+        list.push(unified);
+        seenIds.add(c.id);
+      }
     }
-    return releaseList;
+
+    // Merge static baseline items
+    for (const l of releaseList) {
+      if (!list.some((r) => r.id === l.id || r.fdrNumber === l.fdrNumber)) {
+        list.push(l);
+      }
+    }
+
+    return list;
   }, [apiResponse, releaseList]);
 
   // Filtered by Tab (enabling dedicated Request for Refund views)
@@ -296,14 +374,6 @@ export default function ReleaseRequestsPage() {
 
   // Selected FDR object
   const activeFdr = CENTRAL_FDR_RECORDS.find((r) => r.id === newFdrId) || CENTRAL_FDR_RECORDS[0];
-
-  // Helper to open in dedicated Refund mode
-  const handleOpenRefundModal = () => {
-    setNewRequestType("PARTIAL_REFUND");
-    setNewJustification("Security deposit refund requested following course discontinuation / approved intake reduction under AICTE APH norms.");
-    setNewRegulatoryClause("AICTE Approval Process Handbook (APH) Clause 7.6 (Pro-rata Deposit Adjustment)");
-    setNewRequestModal(true);
-  };
 
   // Handle New Release/Refund Submission
   const handleCreateRequest = async () => {
@@ -343,6 +413,39 @@ export default function ReleaseRequestsPage() {
     // Optimistic update
     setReleaseList([newReq, ...releaseList]);
     setNewRequestModal(false);
+
+    // Sync to Approving Authority Queue
+    registerApprovalCase({
+      id: `appr-${newReq.id}`,
+      fdrId: activeFdr.id,
+      fdrNumber: activeFdr.fdrNumber,
+      institutionId: activeFdr.institutionId,
+      institutionName: activeFdr.institutionName,
+      bankName: activeFdr.bankName,
+      principalAmount: activeFdr.principalAmount,
+      requestType: newRequestType,
+      requestedDate: new Date().toISOString(),
+      status: "PENDING_APPROVAL",
+      scrutinyFinding: newJustification,
+      scrutinyOfficer: "Rajesh Kumar (Senior Scrutiny Officer)",
+      scrutinyDate: new Date().toISOString(),
+      supportingDocuments: [
+        { name: newDocumentName, size: "1.8 MB", status: "VERIFIED" },
+        { name: `${activeFdr.bankName.replace(/\s+/g, "_")}_Original_Certificate.pdf`, size: "2.5 MB", status: "VERIFIED" },
+      ],
+      previousDecisions: [
+        {
+          stage: "Institutional Submission",
+          officer: user?.name || "Institution Representative",
+          decision: "SUBMITTED",
+          timestamp: new Date().toISOString().replace("T", " ").substring(0, 16) + " UTC",
+          remarks: newJustification,
+        },
+      ],
+      decisionReasonRequired: true,
+      regulatoryClause: newRegulatoryClause,
+      applicantName: user?.name || "Institution Representative",
+    });
 
     // Call persistent backend API
     try {
@@ -451,8 +554,8 @@ export default function ReleaseRequestsPage() {
         title={isDedicatedRefundRoute ? "Security Deposit Refund Requests" : "Release & Refund Management"}
         description={
           isDedicatedRefundRoute
-            ? "Submit and track pro-rata security deposit refund applications, program closure returns, and exit clearance claims under AICTE norms."
-            : "Process security deposit refund applications, verify statutory lock-in periods, issue bank lien discharge vouchers (NOC), and enforce AICTE financial governance boundaries."
+            ? "Track and submit institutional security deposit refund applications and exit clearance claims."
+            : "Process security deposit refund applications and issue bank lien discharge vouchers (NOC)."
         }
         breadcrumb={[
           { label: "Dashboard", href: "/dashboard" },
@@ -465,204 +568,170 @@ export default function ReleaseRequestsPage() {
               size="sm"
               onClick={() => refetch()}
               disabled={isLoading}
-              title="Refresh live registry from database"
+              title="Refresh live registry"
             >
               <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
               Refresh
             </Button>
             <Button variant="outline" size="sm">
               <Download size={14} />
-              Export Register
+              Export
             </Button>
             {isInstitutionRep && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleOpenRefundModal}
-                  className="border-emerald-600 text-emerald-700 hover:bg-emerald-50 font-semibold"
-                >
-                  <Coins size={14} className="text-emerald-600" />
+              <Button
+                variant="primary"
+                size="sm"
+                asChild
+                className="bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs"
+              >
+                <Link to="/refund-requests/new?type=refund">
+                  <Coins size={14} />
                   Request for Refund
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    setNewRequestType("FULL_RELEASE");
-                    setNewRequestModal(true);
-                  }}
-                  className="bg-orange-600 hover:bg-orange-500 shadow-sm"
-                >
-                  <Plus size={15} />
-                  Submit Release / NOC
-                </Button>
-              </>
+                </Link>
+              </Button>
             )}
           </div>
         }
       />
 
-      {/* ─── MANDATORY FINANCIAL SAFEGUARD NOTICE (Section F / PRD) ──────────── */}
-      <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/80 text-blue-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-start gap-3">
-          <div className="p-2 bg-blue-100 text-blue-800 rounded-lg flex-shrink-0 mt-0.5">
-            <Shield size={20} />
-          </div>
-          <div className="space-y-0.5">
-            <p className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
-              <span>Statutory Financial Safeguard Notice: Administrative Approval vs Financial Encashment</span>
-            </p>
-            <p className="text-xs text-blue-900/90 leading-relaxed">
-              AICTE Regulation Bureau administrative approval authorizes the issuance of the official <strong>Bank Discharge NOC voucher</strong> and relinquishes the regulatory lien notation. AICTE does <strong>NOT</strong> transfer money or execute refunds directly. Final deposit encashment and account credit are executed exclusively by the issuing Scheduled Bank's Core Banking System (CBS) upon presentation of this authorization.
-            </p>
-          </div>
+      {/* ─── Compact Statutory Safeguard Notice ────────────────────────── */}
+      <div className="flex items-center justify-between px-3.5 py-2 rounded-lg bg-blue-50/70 border border-blue-200/70 text-xs text-blue-900 shadow-2xs">
+        <div className="flex items-center gap-2">
+          <Shield size={14} className="text-blue-600 flex-shrink-0" />
+          <span>
+            <strong>Statutory Notice:</strong> AICTE issues official Bank Discharge NOCs. Final refund encashment is credited directly by the depository bank.
+          </span>
         </div>
-        <span className="text-[11px] font-mono text-blue-800 bg-blue-100/90 px-2.5 py-1 rounded font-semibold whitespace-nowrap self-end sm:self-center">
-          Administrative Protocol Only
+        <span className="text-[10px] font-mono text-blue-700 bg-blue-100 px-2 py-0.5 rounded font-semibold whitespace-nowrap hidden sm:inline-block">
+          Rule 14.2
         </span>
       </div>
 
       {successAlert && (
-        <Alert variant="success" title="Workflow Action Successfully Recorded" onDismiss={() => setSuccessAlert(null)}>
+        <Alert variant="success" title="Recorded" onDismiss={() => setSuccessAlert(null)}>
           {successAlert}
         </Alert>
       )}
 
-      {/* Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Active Release Queue"
-          value={`${effectiveReleaseList.length} Requests`}
-          subtitle="Value: ₹ 1.75 Cr"
-          icon={<Clock size={18} />}
-          iconColor="orange"
-        />
-        <StatCard
-          title="NOCs Authorized"
-          value={`${effectiveReleaseList.filter((r) => r.status === "APPROVED_PENDING_DISCHARGE").length} Authorized`}
-          subtitle="Lien discharge vouchers"
-          icon={<FileCheck size={18} />}
-          iconColor="green"
-        />
-        <StatCard
-          title="Scrutiny Recommendations"
-          value={`${effectiveReleaseList.filter((r) => r.status === "SCRUTINY_RECOMMENDED").length} Cases`}
-          subtitle="Awaiting final authority"
-          icon={<CheckCircle2 size={18} />}
-          iconColor="blue"
-        />
-        <StatCard
-          title="Permission Integrity"
-          value="Segregated"
-          subtitle="Admin barred from approval"
-          icon={<ShieldAlert size={18} />}
-          iconColor="purple"
-        />
+      {/* ─── Clean Simplified Metrics ──────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+          <span className="text-xs text-slate-500 font-medium block">Total Claims</span>
+          <p className="text-2xl font-bold text-slate-900 font-plus-jakarta mt-0.5">
+            {effectiveReleaseList.length}
+          </p>
+        </div>
+
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+          <span className="text-xs text-slate-500 font-medium block">Claim Value</span>
+          <p className="text-2xl font-bold text-slate-900 font-plus-jakarta mt-0.5">
+            ₹1.75 Cr
+          </p>
+        </div>
+
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+          <span className="text-xs text-slate-500 font-medium block">Authorized NOCs</span>
+          <p className="text-2xl font-bold text-emerald-600 font-plus-jakarta mt-0.5">
+            {effectiveReleaseList.filter((r) => r.status === "APPROVED_PENDING_DISCHARGE").length}
+          </p>
+        </div>
+
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+          <span className="text-xs text-slate-500 font-medium block">Under Review</span>
+          <p className="text-2xl font-bold text-amber-600 font-plus-jakarta mt-0.5">
+            {effectiveReleaseList.filter((r) => r.status === "PENDING_SCRUTINY" || r.status === "SCRUTINY_RECOMMENDED").length}
+          </p>
+        </div>
       </div>
 
-      {/* Release Requests Table with Dedicated Filter Tabs */}
+      {/* ─── Release Requests Table with Clean Filter Tabs ─────────────── */}
       <Card noPadding className="border-slate-200">
-        <div className="p-4 border-b border-slate-100 bg-slate-50/50 space-y-3">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-            <div>
-              <CardTitle className="text-base flex items-center gap-2">
-                <FileCheck size={16} className="text-orange-600" />
-                <span>Security Deposit Release & Refund Applications</span>
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Review formal institutional applications, examine exit criteria, and authorize bank discharge vouchers.
-              </CardDescription>
-            </div>
-            <span className="text-[11px] font-mono text-slate-500 bg-white border border-slate-200 px-2.5 py-1 rounded">
-              Total {displayList.length} Applications Shown
-            </span>
+        <div className="p-3.5 border-b border-slate-100 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <FileCheck size={16} className="text-slate-600" />
+            <h3 className="text-sm font-bold text-slate-900">Applications Registry</h3>
+            <span className="text-xs text-slate-400 font-mono">({displayList.length})</span>
           </div>
 
-          {/* Section Navigation Tabs: All, Refunds, Releases, NOCs */}
-          <div className="flex items-center gap-2 pt-1 border-t border-slate-200/60 overflow-x-auto">
+          <div className="flex items-center gap-1.5 overflow-x-auto">
             <button
               onClick={() => setActiveTab("ALL")}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                 activeTab === "ALL"
-                  ? "bg-orange-500 text-white shadow-xs"
-                  : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
               }`}
             >
-              <span>All Applications</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${activeTab === "ALL" ? "bg-orange-600 text-white" : "bg-slate-100 text-slate-700"}`}>
-                {effectiveReleaseList.length}
-              </span>
+              All ({effectiveReleaseList.length})
             </button>
 
             <button
               onClick={() => setActiveTab("REFUND")}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
                 activeTab === "REFUND"
-                  ? "bg-emerald-600 text-white shadow-xs"
-                  : "bg-white text-emerald-800 hover:bg-emerald-50 border border-emerald-200"
+                  ? "bg-emerald-600 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
               }`}
             >
-              <Coins size={13} />
-              <span>Refund Requests (Course Closure / Reduction)</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${activeTab === "REFUND" ? "bg-emerald-700 text-white" : "bg-emerald-100 text-emerald-800"}`}>
-                {effectiveReleaseList.filter((r) => r.requestType === "PARTIAL_REFUND").length}
-              </span>
+              <Coins size={12} />
+              Refunds ({effectiveReleaseList.filter((r) => r.requestType === "PARTIAL_REFUND").length})
             </button>
 
             <button
               onClick={() => setActiveTab("RELEASE")}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                 activeTab === "RELEASE"
-                  ? "bg-orange-500 text-white shadow-xs"
-                  : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
               }`}
             >
-              <span>Full Releases</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${activeTab === "RELEASE" ? "bg-orange-600 text-white" : "bg-slate-100 text-slate-700"}`}>
-                {effectiveReleaseList.filter((r) => r.requestType === "FULL_RELEASE").length}
-              </span>
+              Full Releases ({effectiveReleaseList.filter((r) => r.requestType === "FULL_RELEASE").length})
             </button>
 
             <button
               onClick={() => setActiveTab("NOC")}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                 activeTab === "NOC"
-                  ? "bg-orange-500 text-white shadow-xs"
-                  : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
               }`}
             >
-              <span>Lien NOC Issuances</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${activeTab === "NOC" ? "bg-orange-600 text-white" : "bg-slate-100 text-slate-700"}`}>
-                {effectiveReleaseList.filter((r) => r.requestType === "NOC_ISSUANCE").length}
-              </span>
+              NOCs ({effectiveReleaseList.filter((r) => r.requestType === "NOC_ISSUANCE").length})
             </button>
           </div>
         </div>
 
         <DataTable<ReleaseRequestRecord>
           keyField="id"
+          tableClassName="min-w-[1100px]"
           columns={[
             {
               key: "id",
               header: "Request Ref #",
+              className: "min-w-[140px]",
               cell: (row) => (
-                <div>
-                  <span className="font-mono text-xs font-bold text-slate-900">{row.id.toUpperCase()}</span>
-                  <p className="text-[10px] text-slate-400 font-mono">{row.submissionDate.split(" ")[0]}</p>
+                <div className="py-1">
+                  <span className="font-mono text-xs font-bold text-slate-900 block hover:text-orange-600 transition-colors">
+                    {row.id.toUpperCase()}
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                    <Calendar size={11} className="text-slate-400" />
+                    {formatTimestamp(row.submissionDate)}
+                  </span>
                 </div>
               ),
             },
             {
               key: "fdrNumber",
               header: "Related Instrument",
+              className: "min-w-[190px]",
               cell: (row) => (
-                <div className="space-y-0.5">
-                  <Link to={`/fdr/${row.fdrId}`} className="font-mono text-xs font-bold text-orange-600 hover:underline">
+                <div className="py-1 space-y-0.5">
+                  <Link to={`/fdr/${row.fdrId}`} className="font-mono text-xs font-bold text-orange-600 hover:text-orange-700 hover:underline block">
                     {row.fdrNumber}
                   </Link>
-                  <p className="text-[11px] text-slate-500">{row.bankName}</p>
-                  <p className="text-[10px] text-slate-400 font-mono font-bold">
+                  <p className="text-xs font-medium text-slate-800">{row.bankName}</p>
+                  <p className="text-xs font-mono font-extrabold text-slate-900">
                     {formatCurrency(row.principalAmount)}
                   </p>
                 </div>
@@ -671,36 +740,65 @@ export default function ReleaseRequestsPage() {
             {
               key: "institutionName",
               header: "Institution",
+              className: "min-w-[210px]",
               cell: (row) => (
-                <div>
-                  <p className="text-xs font-semibold text-slate-900 truncate max-w-[200px]" title={row.institutionName}>
+                <div className="py-1">
+                  <p className="text-xs font-semibold text-slate-900 leading-snug" title={row.institutionName}>
                     {row.institutionName}
                   </p>
-                  <span className="text-[10px] text-slate-400 font-mono">{row.institutionId}</span>
+                  <span className="inline-block mt-1 font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                    {row.institutionId}
+                  </span>
                 </div>
               ),
             },
             {
               key: "requestType",
               header: "Request Type",
-              cell: (row) => (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200">
-                  {row.requestType.replace(/_/g, " ")}
-                </span>
-              ),
+              className: "min-w-[140px]",
+              cell: (row) => {
+                if (row.requestType === "PARTIAL_REFUND") {
+                  return (
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 whitespace-nowrap">
+                      Partial Refund
+                    </span>
+                  );
+                }
+                if (row.requestType === "FULL_RELEASE") {
+                  return (
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-orange-50 text-orange-800 border border-orange-200 whitespace-nowrap">
+                      Full Release
+                    </span>
+                  );
+                }
+                return (
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-purple-50 text-purple-800 border border-purple-200 whitespace-nowrap">
+                    Lien NOC
+                  </span>
+                );
+              },
             },
             {
               key: "justificationReason",
               header: "Regulatory Justification",
+              className: "min-w-[240px] max-w-[320px]",
               cell: (row) => (
-                <p className="text-xs text-slate-600 truncate max-w-[220px]" title={row.justificationReason}>
-                  {row.justificationReason}
-                </p>
+                <div className="py-1">
+                  <p className="text-xs text-slate-700 line-clamp-2 leading-relaxed" title={row.justificationReason}>
+                    {row.justificationReason}
+                  </p>
+                  {row.regulatoryClause && (
+                    <span className="text-[10px] text-orange-700/90 font-mono block mt-1 truncate" title={row.regulatoryClause}>
+                      § {row.regulatoryClause}
+                    </span>
+                  )}
+                </div>
               ),
             },
             {
               key: "status",
               header: "Workflow Status",
+              className: "min-w-[150px] whitespace-nowrap",
               cell: (row) => {
                 if (row.status === "APPROVED_PENDING_DISCHARGE") {
                   return <Badge variant="success" dot>Approved (NOC Issued)</Badge>;
@@ -718,19 +816,33 @@ export default function ReleaseRequestsPage() {
               key: "actions",
               header: "Action",
               align: "right",
+              className: "min-w-[150px] whitespace-nowrap",
               cell: (row) => (
-                <Button
-                  size="xs"
-                  variant="outline-primary"
-                  onClick={() => {
-                    setSelectedRequest(row);
-                    setPermissionError(null);
-                    setOfficerRemarks("");
-                    setDetailModalOpen(true);
-                  }}
-                >
-                  Review Dossier
-                </Button>
+                <div className="flex items-center justify-end gap-1.5">
+                  {(row.status === "APPROVED_PENDING_DISCHARGE" || row.nocVoucherRef) && (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      className="text-xs font-semibold border-emerald-300 text-emerald-700 hover:bg-emerald-50 shrink-0"
+                      onClick={() => setSelectedNocRow(row)}
+                    >
+                      <Printer size={12} className="mr-1" /> View NOC
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs font-semibold hover:border-orange-300 hover:text-orange-700 shrink-0"
+                    onClick={() => {
+                      setSelectedRequest(row);
+                      setPermissionError(null);
+                      setOfficerRemarks("");
+                      setDetailModalOpen(true);
+                    }}
+                  >
+                    Review Dossier
+                  </Button>
+                </div>
               ),
             },
           ]}
@@ -757,6 +869,21 @@ export default function ReleaseRequestsPage() {
         }
       >
         <div className="space-y-4 text-xs pt-1">
+          {/* Quick link to dedicated form page */}
+          <div className="p-3 bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl border border-orange-200 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Sparkles size={16} className="text-orange-600 flex-shrink-0" />
+              <span className="text-xs text-orange-950 font-medium">
+                Need multi-step bank account details, checklists, and document attachments?
+              </span>
+            </div>
+            <Button size="xs" variant="primary" asChild className="whitespace-nowrap bg-orange-600 hover:bg-orange-500">
+              <Link to="/refund-requests/new" onClick={() => setNewRequestModal(false)}>
+                Open Full Form Page <ArrowRight size={12} className="ml-1" />
+              </Link>
+            </Button>
+          </div>
+
           {/* Step 1: Instrument Selection */}
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
             <span className="font-bold text-slate-800 uppercase tracking-wider text-[10px] block">
@@ -904,6 +1031,30 @@ export default function ReleaseRequestsPage() {
               </div>
             </div>
 
+            {/* Bank Discharge NOC Banner if Approved */}
+            {(selectedRequest.status === "APPROVED_PENDING_DISCHARGE" || selectedRequest.nocVoucherRef) && (
+              <div className="p-3 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <ShieldCheck size={20} className="text-emerald-600 shrink-0" />
+                  <div>
+                    <span className="font-bold text-emerald-950 block text-xs">
+                      Official AICTE Bank Discharge NOC Authorized
+                    </span>
+                    <span className="font-mono text-emerald-800 text-[11px]">
+                      Voucher Ref: {selectedRequest.nocVoucherRef || `AICTE/NOC/2026/DIS-${selectedRequest.id}`}
+                    </span>
+                  </div>
+                </div>
+                <Button
+                  size="xs"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shrink-0"
+                  onClick={() => setSelectedNocRow(selectedRequest)}
+                >
+                  <Printer size={12} className="mr-1" /> View Official NOC Voucher
+                </Button>
+              </div>
+            )}
+
             {/* Justification & Supporting Documents */}
             <div className="space-y-2">
               <span className="font-bold text-slate-800 block text-xs">Institutional Justification:</span>
@@ -1005,6 +1156,32 @@ export default function ReleaseRequestsPage() {
           </div>
         </Dialog>
       )}
+
+      {/* ─── MODAL: OFFICIAL AICTE BANK DISCHARGE NOC VOUCHER ─── */}
+      <BankDischargeNocModal
+        open={!!selectedNocRow}
+        onClose={() => setSelectedNocRow(null)}
+        data={
+          selectedNocRow
+            ? {
+                voucherRef:
+                  selectedNocRow.nocVoucherRef ||
+                  `AICTE/NOC/2026/REL-${selectedNocRow.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase()}`,
+                fdrNumber: selectedNocRow.fdrNumber,
+                fdrId: selectedNocRow.fdrId,
+                institutionId: selectedNocRow.institutionId,
+                institutionName: selectedNocRow.institutionName,
+                bankName: selectedNocRow.bankName,
+                principalAmount: selectedNocRow.principalAmount,
+                sanctionAmount: selectedNocRow.principalAmount,
+                requestType: selectedNocRow.requestType,
+                sanctionDate: selectedNocRow.submissionDate,
+                regulatoryClause: selectedNocRow.regulatoryClause,
+                approvingAuthority: "Dr. Rajesh Sharma, Member Secretary, AICTE",
+              }
+            : null
+        }
+      />
     </div>
   );
 }

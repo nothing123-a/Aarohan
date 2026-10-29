@@ -6,7 +6,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/dashboard": "Dashboard Overview",
   "/fdr": "FDR Central Registry",
   "/fdr/new": "Submit New FDR",
-  "/verification": "Document & Lien Verification",
+  "/verification": "OCR Document Verification & Technical Scrutiny",
   "/alerts": "Maturity & Expiry Alerts",
   "/monitoring": "Maturity Timeline & Monitoring Register",
   "/notifications": "Observation & System Notifications",

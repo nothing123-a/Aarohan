@@ -29,10 +29,10 @@ def create_db_engine():
 
     try:
         if "postgresql" in db_url:
-            # 30s timeout accommodates TLS handshakes & serverless cloud wake-ups (e.g. Supabase, Neon)
+            # Fast 3s connect timeout to prevent freezing when cloud network or DNS is unreachable
             pg_engine = create_engine(
                 db_url,
-                connect_args={"connect_timeout": 30},
+                connect_args={"connect_timeout": 3},
                 pool_pre_ping=True,
                 pool_size=10,
                 max_overflow=20,

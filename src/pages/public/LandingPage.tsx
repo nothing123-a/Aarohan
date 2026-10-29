@@ -103,7 +103,7 @@ export default function LandingPage() {
               Standard Operating Procedure
             </h2>
             <p className="text-2xl sm:text-3xl font-bold text-slate-900 mt-2 font-plus-jakarta">
-              How FDR-SMART Operates
+              How Aarohan Operates
             </p>
             <p className="text-slate-500 text-sm mt-3">
               A transparent, five-step lifecycle ensuring regulatory compliance from initial deposit submission to final discharge.
@@ -170,10 +170,10 @@ export default function LandingPage() {
             <span>Smart India Hackathon 2026 · Problem Statement ID: SIH 26265</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 font-plus-jakarta">
-            About FDR-SMART & Team Garuda Netra
+            About Aarohan
           </h2>
           <p className="text-slate-600 text-sm mt-4 leading-relaxed">
-            FDR-SMART is designed to solve the critical challenges of paper-based fixed deposit management for the AICTE Regulation Bureau. By establishing a unified digital registry, automated core banking lien confirmation, and lifecycle monitoring, the platform safeguards institutional security deposits and enforces regulatory accountability.
+            Aarohan is designed to solve the critical challenges of paper-based fixed deposit management for the AICTE Regulation Bureau. By establishing a unified digital registry, automated core banking lien confirmation, and lifecycle monitoring, the platform safeguards institutional security deposits and enforces regulatory accountability.
           </p>
 
           <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-4 text-left">
@@ -183,7 +183,7 @@ export default function LandingPage() {
             </div>
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
               <p className="text-xs font-bold text-slate-900">Innovation Team</p>
-              <p className="text-xs text-slate-500 mt-1">Team Garuda Netra · SIH 2026 Nationwide Finalist</p>
+              <p className="text-xs text-slate-500 mt-1">Team Aarohan · SIH 2026 Nationwide Finalist</p>
             </div>
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
               <p className="text-xs font-bold text-slate-900">Problem Focus</p>
@@ -203,10 +203,10 @@ export default function LandingPage() {
               </div>
               <div>
                 <p className="font-bold text-white text-base font-plus-jakarta">
-                  FDR-SMART
+                  Aarohan
                 </p>
                 <p className="text-[11px] text-slate-400">
-                  Smart India Hackathon 2026 · Problem Statement ID: SIH 26265 · Team Garuda Netra
+                  Smart India Hackathon 2026 · Problem Statement ID: SIH 26265 · Team Aarohan
                 </p>
               </div>
             </div>
@@ -224,7 +224,7 @@ export default function LandingPage() {
 
           <div className="pt-6 flex flex-col md:flex-row items-center justify-between gap-4 text-[11px] text-slate-500">
             <p>
-              © 2026 FDR-SMART · Team Garuda Netra. All rights reserved.
+              © 2026 Aarohan · Team Aarohan. All rights reserved.
             </p>
             <p className="bg-slate-800/80 px-3 py-1 rounded-md text-amber-400/90 border border-slate-700/60 text-center md:text-right">
               Disclaimer: Prototype Demonstration System developed for Smart India Hackathon 2026 (SIH 26265). This is an evaluation prototype and not an officially deployed AICTE production service.

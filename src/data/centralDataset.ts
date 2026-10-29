@@ -45,6 +45,16 @@ export interface ReleaseApprovalCase {
     remarks: string;
   }[];
   decisionReasonRequired: boolean;
+  applicantName?: string;
+  applicantDesignation?: string;
+  regulatoryClause?: string;
+  bankAccountNumber?: string;
+  bankIfsc?: string;
+  claimAmount?: number;
+  nocVoucherRef?: string;
+  approvedDate?: string;
+  approvingAuthority?: string;
+  sanctionAmount?: number;
 }
 
 // ─── 1. INSTITUTIONS ───────────────────────────────────────────────
@@ -963,6 +973,48 @@ export const CENTRAL_APPROVAL_CASES: ReleaseApprovalCase[] = [
     ],
     decisionReasonRequired: true,
   },
+  {
+    id: "appr-003",
+    fdrId: "fdr-001",
+    fdrNumber: "FDR/AICTE/2026/089",
+    institutionId: "inst-001",
+    institutionName: "Delhi Technological University (DTU)",
+    bankName: "State Bank of India",
+    principalAmount: 50_00_000,
+    requestType: "PARTIAL_REFUND",
+    requestedDate: "2026-10-28T09:30:00Z",
+    status: "PENDING_APPROVAL",
+    scrutinyFinding: "Pro-rata security deposit refund requested following course intake rationalization under AICTE APH Clause 7.6. No regulatory or student dues pending.",
+    scrutinyOfficer: "Rajesh Kumar (Senior Scrutiny Officer)",
+    scrutinyDate: "2026-10-28T14:00:00Z",
+    supportingDocuments: [
+      { name: "DTU_SBI_50L_Official_Receipt.pdf", size: "2.1 MB", status: "VERIFIED" },
+      { name: "Academic_Council_Intake_Reduction.pdf", size: "1.4 MB", status: "VERIFIED" },
+      { name: "SRO_No_Dues_Clearance_Certificate.pdf", size: "980 KB", status: "VERIFIED" },
+    ],
+    previousDecisions: [
+      {
+        stage: "Institutional Application Dossier",
+        officer: "Prof. S. K. Mahajan (Registrar, DTU)",
+        decision: "SUBMITTED",
+        timestamp: "2026-10-28 09:30 UTC",
+        remarks: "Formal refund dossier submitted following approved intake reduction.",
+      },
+      {
+        stage: "Technical Scrutiny",
+        officer: "Rajesh Kumar (Senior Scrutiny Officer)",
+        decision: "RECOMMENDED_FOR_APPROVAL",
+        timestamp: "2026-10-28 14:00 UTC",
+        remarks: "No student liabilities pending. Recommended for executive sanction.",
+      },
+    ],
+    decisionReasonRequired: true,
+    applicantName: "Prof. S. K. Mahajan",
+    applicantDesignation: "Registrar, DTU",
+    regulatoryClause: "AICTE Approval Process Handbook (APH) Clause 7.6",
+    bankAccountNumber: "4011299841",
+    bankIfsc: "SBIN0001234",
+  },
 ];
 
 // ─── 5. DEMO USERS ────────────────────────────────────────────────
@@ -1118,6 +1170,42 @@ export function getScrutinyQueue() {
  */
 export function getApprovalCases() {
   return CENTRAL_APPROVAL_CASES;
+}
+
+/**
+ * Registers a new release/refund request into the Approving Authority queue.
+ */
+export function registerApprovalCase(newCase: ReleaseApprovalCase) {
+  // If an application for this FDR already exists, update/replace it to maintain genuine singular records
+  const existingIndex = CENTRAL_APPROVAL_CASES.findIndex(
+    (c) => c.fdrNumber === newCase.fdrNumber || c.fdrId === newCase.fdrId || c.id === newCase.id
+  );
+  if (existingIndex !== -1) {
+    CENTRAL_APPROVAL_CASES[existingIndex] = {
+      ...CENTRAL_APPROVAL_CASES[existingIndex],
+      ...newCase,
+    };
+    return CENTRAL_APPROVAL_CASES[existingIndex];
+  }
+  // Otherwise prepend
+  CENTRAL_APPROVAL_CASES.unshift(newCase);
+  return newCase;
+}
+
+/**
+ * Updates an existing release/refund approval case in the central dataset.
+ */
+export function updateApprovalCase(
+  id: string,
+  updates: Partial<ReleaseApprovalCase>
+): ReleaseApprovalCase | undefined {
+  const index = CENTRAL_APPROVAL_CASES.findIndex((c) => c.id === id);
+  if (index === -1) return undefined;
+  CENTRAL_APPROVAL_CASES[index] = {
+    ...CENTRAL_APPROVAL_CASES[index],
+    ...updates,
+  };
+  return CENTRAL_APPROVAL_CASES[index];
 }
 
 /**

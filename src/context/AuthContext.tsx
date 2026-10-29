@@ -78,11 +78,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let token: string;
 
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
         const response = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, password }),
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
         if (response.ok) {
           const res = await response.json();
           user = res.data.user;

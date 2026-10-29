@@ -99,6 +99,15 @@ def parse_iso_date(val: Optional[str]) -> Optional[date]:
             pass
     return None
 
+def is_valid_extracted_field(field: Optional[ExtractedField]) -> bool:
+    """Returns True if the field was actually extracted and is readable."""
+    if not field or field.value is None:
+        return False
+    if getattr(field, "status", "found") in ("not_found", "unreadable"):
+        return False
+    val_str = str(field.value).strip()
+    return val_str not in ("", "Not Found", "Unreadable", "None")
+
 def detect_discrepancies(
     instrument_id: str,
     verification_id: str,
@@ -117,9 +126,9 @@ def detect_discrepancies(
 
     # 1. FDR Reference Number comparison
     sub_ref = str(submitted_data.get("fdrNumber") or submitted_data.get("referenceNumber") or "").strip()
-    ext_ref_field = extracted_fields.get("reference_number")
-    ext_ref = str(ext_ref_field.value).strip() if ext_ref_field else ""
-    if ext_ref and sub_ref:
+    ext_ref_field = extracted_fields.get("reference_number") or extracted_fields.get("fdr_number")
+    if is_valid_extracted_field(ext_ref_field) and sub_ref:
+        ext_ref = str(ext_ref_field.value).strip()
         if normalize_text(sub_ref) != normalize_text(ext_ref):
             disc = VerificationDiscrepancy(
                 verification_id=verification_id,
@@ -139,8 +148,8 @@ def detect_discrepancies(
     # 2. Bank Name comparison
     sub_bank = str(submitted_data.get("bankName") or "").strip()
     ext_bank_field = extracted_fields.get("bank_name")
-    ext_bank = str(ext_bank_field.value).strip() if ext_bank_field else ""
-    if ext_bank and sub_bank:
+    if is_valid_extracted_field(ext_bank_field) and sub_bank:
+        ext_bank = str(ext_bank_field.value).strip()
         if normalize_text(sub_bank) != normalize_text(ext_bank):
             disc = VerificationDiscrepancy(
                 verification_id=verification_id,
@@ -160,8 +169,8 @@ def detect_discrepancies(
     # 3. Branch IFSC Code comparison
     sub_ifsc = str(submitted_data.get("ifscCode") or "").strip().upper()
     ext_ifsc_field = extracted_fields.get("ifsc_code")
-    ext_ifsc = str(ext_ifsc_field.value).strip().upper() if ext_ifsc_field else ""
-    if ext_ifsc and sub_ifsc:
+    if is_valid_extracted_field(ext_ifsc_field) and sub_ifsc:
+        ext_ifsc = str(ext_ifsc_field.value).strip().upper()
         if sub_ifsc != ext_ifsc:
             disc = VerificationDiscrepancy(
                 verification_id=verification_id,
@@ -181,7 +190,7 @@ def detect_discrepancies(
     # 4. Depositor Name comparison
     sub_depositor = str(submitted_data.get("institutionName") or submitted_data.get("depositorName") or "").strip()
     ext_depositor_field = extracted_fields.get("depositor_name")
-    if ext_depositor_field and ext_depositor_field.value and sub_depositor:
+    if is_valid_extracted_field(ext_depositor_field) and sub_depositor:
         ext_depositor = str(ext_depositor_field.value).strip()
         # Normalized substring match check
         norm_sub = normalize_text(sub_depositor)
@@ -209,7 +218,7 @@ def detect_discrepancies(
         sub_amt = 0.0
         
     ext_amt_field = extracted_fields.get("amount")
-    if ext_amt_field and ext_amt_field.value is not None:
+    if is_valid_extracted_field(ext_amt_field):
         try:
             ext_amt = float(ext_amt_field.value)
             if abs(sub_amt - ext_amt) > policy.amount_tolerance_inr:
@@ -233,7 +242,7 @@ def detect_discrepancies(
     # 6. Issue / Deposit Date comparison (semantic calendar comparison)
     sub_issue = parse_iso_date(submitted_data.get("issueDate") or submitted_data.get("depositDate"))
     ext_issue_field = extracted_fields.get("issue_date")
-    ext_issue = parse_iso_date(str(ext_issue_field.value)) if ext_issue_field and ext_issue_field.value else None
+    ext_issue = parse_iso_date(str(ext_issue_field.value)) if is_valid_extracted_field(ext_issue_field) else None
     if sub_issue and ext_issue and sub_issue != ext_issue:
         disc = VerificationDiscrepancy(
             verification_id=verification_id,
@@ -253,7 +262,7 @@ def detect_discrepancies(
     # 7. Maturity Date comparison (semantic calendar comparison)
     sub_mat = parse_iso_date(submitted_data.get("maturityDate"))
     ext_mat_field = extracted_fields.get("maturity_date")
-    ext_mat = parse_iso_date(str(ext_mat_field.value)) if ext_mat_field and ext_mat_field.value else None
+    ext_mat = parse_iso_date(str(ext_mat_field.value)) if is_valid_extracted_field(ext_mat_field) else None
     if sub_mat and ext_mat and sub_mat != ext_mat:
         disc = VerificationDiscrepancy(
             verification_id=verification_id,
@@ -292,7 +301,7 @@ def detect_discrepancies(
     # 9. Lien Beneficiary & Endorsement Clause Validation
     if policy.require_aicte_lien:
         lien_field = extracted_fields.get("lien_endorsement") or extracted_fields.get("lien_beneficiary")
-        if not lien_field or not lien_field.value:
+        if not is_valid_extracted_field(lien_field):
             disc = VerificationDiscrepancy(
                 verification_id=verification_id,
                 instrument_id=instrument_id,
@@ -324,9 +333,13 @@ def detect_discrepancies(
             discrepancies.append(disc)
 
     # 10. Low Confidence OCR Result Check
-    confidence_scores = [f.confidence for f in extracted_fields.values()]
+    found_fields = [
+        f for f in extracted_fields.values()
+        if getattr(f, "status", "found") in ("found", "needs_review") and f.confidence > 0
+    ]
+    confidence_scores = [f.confidence for f in found_fields]
     avg_confidence = (sum(confidence_scores) / len(confidence_scores) * 100) if confidence_scores else 0.0
-    if avg_confidence < policy.min_confidence_threshold and len(extracted_fields) > 0:
+    if avg_confidence < policy.min_confidence_threshold and len(found_fields) > 0:
         disc = VerificationDiscrepancy(
             verification_id=verification_id,
             instrument_id=instrument_id,

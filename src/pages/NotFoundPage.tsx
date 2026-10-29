@@ -23,7 +23,7 @@ export default function NotFoundPage() {
         </h1>
 
         <p className="text-xs text-slate-500 mt-2 max-w-xs mx-auto leading-relaxed">
-          The requested administrative module or URL does not exist in the FDR-SMART portal repository.
+          The requested administrative module or URL does not exist in the Aarohan portal repository.
         </p>
 
         <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -44,7 +44,7 @@ export default function NotFoundPage() {
 
         <div className="mt-8 pt-5 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-400">
           <Building2 size={13} className="text-orange-500" />
-          <span>FDR-SMART · AICTE Regulation Bureau · SIH 26265</span>
+          <span>Aarohan · AICTE Regulation Bureau · SIH 26265</span>
         </div>
       </div>
     </div>

@@ -70,7 +70,7 @@ export function FDRDash() {
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold tracking-tight text-white flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-orange-500 inline-block animate-pulse" />
-              FDR-SMART
+              Aarohan
             </span>
             <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
               portal.aicte-india.org/fdr

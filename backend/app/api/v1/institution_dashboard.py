@@ -27,6 +27,7 @@ from app.core.models import (
     ReleaseRefundRequest,
     ReleaseRefundDecision,
     InstrumentVerification,
+    Notification,
 )
 from app.core.security import get_current_user_optional
 
@@ -274,6 +275,40 @@ async def get_institution_financial_status(
     # Note: Weekly statement auditing/tallying is managed on the Approver Dashboard,
     # so missing statement nag banners are omitted from the institutional portal.
     notifications = []
+
+    # Dispatched Statutory Maturity / Rollover Notices from Scrutiny & Monitoring Desk
+    try:
+        from app.modules.notifications.router import DISPATCHED_NOTICES
+        for notice in DISPATCHED_NOTICES:
+            if notice.get("institutionId") in (None, inst_id):
+                notifications.append({
+                    "type": "STATUTORY_NOTICE",
+                    "severity": "CRITICAL",
+                    "title": notice["title"],
+                    "body": notice["message"],
+                    "action_required": True,
+                    "fdr_number": notice.get("fdr_number"),
+                })
+    except Exception:
+        pass
+
+    # Database-persisted official notifications
+    try:
+        db_notifs = db.query(Notification).filter(
+            Notification.institution_id == inst_id,
+            Notification.notification_type == "manual_maturity_notice"
+        ).order_by(Notification.created_at.desc()).limit(5).all()
+        for dn in db_notifs:
+            notifications.append({
+                "type": "STATUTORY_NOTICE",
+                "severity": "CRITICAL",
+                "title": dn.title,
+                "body": dn.message,
+                "action_required": True,
+                "fdr_number": dn.instrument_id,
+            })
+    except Exception:
+        pass
 
     # Statutory Inquiry Notices issued by Approving Authority on Statement / Financial Scrutiny
     for a in open_alerts:

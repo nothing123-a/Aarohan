@@ -75,7 +75,7 @@ export default function AccessDeniedPage() {
         <div className="mt-8 pt-6 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
           <div className="flex items-center gap-1.5">
             <Building2 size={13} className="text-orange-500" />
-            <span>FDR-SMART Security Gateway</span>
+            <span>Aarohan Security Gateway</span>
           </div>
           <button
             onClick={() => logout()}

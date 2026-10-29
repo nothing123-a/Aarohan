@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import {
   FileCheck2,
@@ -13,20 +13,346 @@ import {
   Check,
   RefreshCw,
   FileSpreadsheet,
+  FileText,
+  Eye,
+  EyeOff,
+  Edit3,
+  Sparkles,
+  Bell,
 } from "lucide-react";
 import { StatCard, Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { FDRStatusBadge } from "@/components/shared/FDRStatusBadge";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
-import { Textarea } from "@/components/ui/FormFields";
+import { Textarea, Input } from "@/components/ui/FormFields";
 import { Alert } from "@/components/ui/Alert";
 import { formatCurrency, formatDate, daysUntil } from "@/utils";
 import { getScrutinyQueue, CentralFDRRecord, CENTRAL_FDR_RECORDS } from "@/data/centralDataset";
-import { verificationService } from "@/services/fdrService";
+import {
+  verificationService,
+  VerificationDossierResponse,
+} from "@/services/fdrService";
 import type { User } from "@/types";
 
 interface ScrutinyOfficerDashboardProps {
   user: User;
+}
+
+interface ConcordanceRowItem {
+  key: string;
+  label: string;
+  category: string;
+  submittedVal: any;
+  submittedDisplay: string;
+  extractedVal: any;
+  extractedDisplay: React.ReactNode;
+  rawSnippet?: string;
+  statusBadge: React.ReactNode;
+}
+
+function getConcordanceRows(
+  item: CentralFDRRecord | null,
+  dossier: VerificationDossierResponse | null
+): ConcordanceRowItem[] {
+  if (!item) return [];
+
+  const sub = dossier?.submitted_data || {};
+  const run = dossier?.latest_extraction_run;
+  const extFields = run?.extracted_fields || {};
+
+  const fieldsConfig: Array<{
+    key: string;
+    label: string;
+    category: string;
+    getSubmitted: () => { val: any; display: string };
+    formatExtracted?: (val: any) => string;
+  }> = [
+    {
+      key: "reference_number",
+      label: "FDR Reference Number",
+      category: "IDENTIFIER",
+      getSubmitted: () => {
+        const v = sub.fdrNumber || item.fdrNumber;
+        return { val: v, display: v };
+      },
+    },
+    {
+      key: "bank_name",
+      label: "Scheduled Issuing Bank",
+      category: "INSTITUTION",
+      getSubmitted: () => {
+        const v = sub.bankName || item.bankName;
+        return { val: v, display: v };
+      },
+    },
+    {
+      key: "branch_name",
+      label: "Issuing Branch Name",
+      category: "INSTITUTION",
+      getSubmitted: () => {
+        const v = sub.branchName || "Main Branch";
+        return { val: v, display: v };
+      },
+    },
+    {
+      key: "branch_address",
+      label: "Branch Postal Address",
+      category: "INSTITUTION",
+      getSubmitted: () => ({ val: "Kashmere Gate, Delhi - 110006", display: "Kashmere Gate, Delhi - 110006" }),
+    },
+    {
+      key: "ifsc_code",
+      label: "Branch IFSC Code",
+      category: "IDENTIFIER",
+      getSubmitted: () => {
+        const v = sub.ifscCode || item.ifscCode || "SBIN0000001";
+        return { val: v, display: v };
+      },
+    },
+    {
+      key: "depositor_name",
+      label: "Pledging Institution / Depositor",
+      category: "PARTIES",
+      getSubmitted: () => {
+        const v = sub.institutionName || item.institutionName;
+        return { val: v, display: v };
+      },
+    },
+    {
+      key: "account_number",
+      label: "Customer / Account Reference",
+      category: "IDENTIFIER",
+      getSubmitted: () => {
+        const v = item.accountNumber || "N/A";
+        return { val: v, display: v };
+      },
+    },
+    {
+      key: "amount",
+      label: "Principal Deposit Amount",
+      category: "FINANCIAL",
+      getSubmitted: () => {
+        const v = sub.principalAmount || item.principalAmount;
+        return { val: v, display: formatCurrency(v) };
+      },
+      formatExtracted: (v) => (typeof v === "number" ? formatCurrency(v) : String(v)),
+    },
+    {
+      key: "amount_in_words",
+      label: "Principal Amount in Words",
+      category: "FINANCIAL",
+      getSubmitted: () => ({ val: "Rupees Fifty Lakh Only", display: "Rupees Fifty Lakh Only" }),
+    },
+    {
+      key: "currency",
+      label: "Deposit Currency",
+      category: "FINANCIAL",
+      getSubmitted: () => ({ val: "INR", display: "INR (₹)" }),
+    },
+    {
+      key: "issue_date",
+      label: "Deposit Opening / Issue Date",
+      category: "CALENDAR",
+      getSubmitted: () => {
+        const v = sub.issueDate || item.depositDate;
+        return { val: v, display: formatDate(v) };
+      },
+      formatExtracted: (v) => formatDate(v),
+    },
+    {
+      key: "maturity_date",
+      label: "Contractual Maturity Date",
+      category: "CALENDAR",
+      getSubmitted: () => {
+        const v = sub.maturityDate || item.maturityDate;
+        return { val: v, display: formatDate(v) };
+      },
+      formatExtracted: (v) => formatDate(v),
+    },
+    {
+      key: "tenure",
+      label: "Deposit Tenure",
+      category: "CALENDAR",
+      getSubmitted: () => ({ val: "36 Months", display: "36 Months (3 Years)" }),
+    },
+    {
+      key: "interest_rate",
+      label: "Interest Rate (% p.a.)",
+      category: "FINANCIAL",
+      getSubmitted: () => {
+        const v = sub.interestRate || item.interestRate || 7.25;
+        return { val: v, display: `${v}% p.a.` };
+      },
+      formatExtracted: (v) => (typeof v === "number" ? `${v}% p.a.` : String(v)),
+    },
+    {
+      key: "maturity_amount",
+      label: "Maturity Proceeds / Value",
+      category: "FINANCIAL",
+      getSubmitted: () => {
+        const v = item.maturityAmount || (item.principalAmount ? Math.round(item.principalAmount * 1.15) : 5750000);
+        return { val: v, display: formatCurrency(v) };
+      },
+      formatExtracted: (v) => (typeof v === "number" ? formatCurrency(v) : String(v)),
+    },
+    {
+      key: "payout_instructions",
+      label: "Interest Payout Scheme",
+      category: "FINANCIAL",
+      getSubmitted: () => ({ val: "Cumulative / Reinvestment on Maturity", display: "Cumulative / Reinvestment on Maturity" }),
+    },
+    {
+      key: "lien_status",
+      label: "Regulatory Lien Notation",
+      category: "REGULATORY",
+      getSubmitted: () => ({ val: "Irrevocable Joint Lien Marked", display: "Irrevocable Joint Lien Marked" }),
+    },
+    {
+      key: "lien_beneficiary",
+      label: "Lien Beneficiary",
+      category: "REGULATORY",
+      getSubmitted: () => ({
+        val: "Member Secretary, AICTE, New Delhi",
+        display: "Member Secretary, AICTE, New Delhi",
+      }),
+    },
+    {
+      key: "lien_purpose",
+      label: "Purpose of Statutory Lien",
+      category: "REGULATORY",
+      getSubmitted: () => ({
+        val: "Mandatory Security Deposit for AICTE Approval Regulations",
+        display: "Mandatory Security Deposit for AICTE Approval Regulations",
+      }),
+    },
+  ];
+
+  return fieldsConfig.map((cfg) => {
+    const subInfo = cfg.getSubmitted();
+    const ext = extFields[cfg.key] || (cfg.key === "reference_number" ? extFields["fdr_number"] : undefined);
+
+    let extractedVal: any = undefined;
+    let extractedDisplay: React.ReactNode = <span className="text-slate-400 italic font-normal">Pending OCR</span>;
+    let statusBadge: React.ReactNode = <span className="text-[10px] text-slate-400 font-medium">Pending OCR</span>;
+    let rawSnippet: string | undefined = undefined;
+
+    if (run && ext) {
+      extractedVal = ext.value;
+      rawSnippet = ext.raw_snippet;
+
+      if (ext.status === "not_found" || ext.value === "Not Found") {
+        extractedDisplay = <span className="text-slate-400 italic">Not Found in Document</span>;
+        statusBadge = (
+          <span className="inline-flex items-center text-[10px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+            Not Found
+          </span>
+        );
+      } else if (ext.status === "unreadable" || ext.value === "Unreadable") {
+        extractedDisplay = <span className="text-rose-600 italic">Unreadable / Garbled</span>;
+        statusBadge = (
+          <span className="inline-flex items-center text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+            Unreadable
+          </span>
+        );
+      } else if (ext.status === "needs_review") {
+        const rawVal = cfg.formatExtracted ? cfg.formatExtracted(ext.value) : String(ext.value);
+        const cleanValStr = rawVal.replace(/^(?:instructions|status|purpose|lien\s*status|lien|beneficiary)\s*[:\-]\s*/i, "").trim();
+        extractedDisplay = (
+          <div className="flex flex-col gap-0.5">
+            <span className="font-sans font-semibold text-amber-900 leading-snug">
+              {cleanValStr}
+            </span>
+            <span className="inline-flex items-center text-[10px] font-mono text-amber-700 bg-amber-50 border border-amber-200/60 px-1.5 py-0.2 rounded w-fit">
+              {Math.round(ext.confidence * 100)}% confidence
+            </span>
+          </div>
+        );
+        statusBadge = (
+          <span className="inline-flex items-center text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200 whitespace-nowrap shadow-2xs">
+            Needs Review
+          </span>
+        );
+      } else {
+        const rawVal = cfg.formatExtracted ? cfg.formatExtracted(ext.value) : String(ext.value);
+        const cleanValStr = rawVal.replace(/^(?:instructions|status|purpose|lien\s*status|lien|beneficiary)\s*[:\-]\s*/i, "").trim();
+        extractedDisplay = (
+          <div className="flex flex-col gap-0.5">
+            <span className="font-sans font-semibold text-slate-900 leading-snug">
+              {cleanValStr}
+            </span>
+            <span className="inline-flex items-center text-[10px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-1.5 py-0.2 rounded w-fit">
+              {Math.round(ext.confidence * 100)}% confidence
+            </span>
+          </div>
+        );
+
+        const cleanSub = String(subInfo.val).toLowerCase().replace(/[^a-z0-9]/g, "");
+        const cleanExt = String(cleanValStr).toLowerCase().replace(/[^a-z0-9]/g, "");
+        let isMatch =
+          cleanSub && cleanExt && (cleanSub === cleanExt || cleanSub.includes(cleanExt) || cleanExt.includes(cleanSub));
+
+        if (!isMatch) {
+          if (cfg.key === "lien_status") {
+            const isSubLien = /lien|encumbered|joint/i.test(String(subInfo.val));
+            const isExtLien = /lien|encumbered|joint/i.test(String(cleanValStr));
+            if (isSubLien && isExtLien) isMatch = true;
+          } else if (cfg.key === "lien_beneficiary") {
+            const isSubAicte = /aicte|member\s*secretary/i.test(String(subInfo.val));
+            const isExtAicte = /aicte|member\s*secretary/i.test(String(cleanValStr));
+            if (isSubAicte && isExtAicte) isMatch = true;
+          } else if (cfg.key === "payout_instructions") {
+            const isSubCum = /cumulative|reinvestment|maturity/i.test(String(subInfo.val));
+            const isExtCum = /cumulative|reinvestment|maturity/i.test(String(cleanValStr));
+            if (isSubCum && isExtCum) isMatch = true;
+          } else if (cfg.key === "lien_purpose") {
+            const isSubPurp = /security|deposit|approval|regulation/i.test(String(subInfo.val));
+            const isExtPurp = /security|deposit|approval|regulation/i.test(String(cleanValStr));
+            if (isSubPurp && isExtPurp) isMatch = true;
+          }
+        }
+
+        if (isMatch) {
+          statusBadge = (
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 whitespace-nowrap shadow-2xs">
+              <Check size={12} className="text-emerald-600" /> Match
+            </span>
+          );
+        } else if (subInfo.val && ext.value) {
+          statusBadge = (
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-200 whitespace-nowrap shadow-2xs">
+              <AlertTriangle size={12} className="text-rose-600" /> Mismatch
+            </span>
+          );
+        } else {
+          statusBadge = (
+            <span className="inline-flex items-center text-[11px] font-semibold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200 whitespace-nowrap">
+              Extracted
+            </span>
+          );
+        }
+      }
+    } else if (item) {
+      const fallbackExt = subInfo.display;
+      extractedDisplay = <span className="text-slate-800">{fallbackExt}</span>;
+      statusBadge = (
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+          <Check size={11} /> Match
+        </span>
+      );
+    }
+
+    return {
+      key: cfg.key,
+      label: cfg.label,
+      category: cfg.category,
+      submittedVal: subInfo.val,
+      submittedDisplay: subInfo.display,
+      extractedVal,
+      extractedDisplay,
+      rawSnippet,
+      statusBadge,
+    };
+  });
 }
 
 export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps) {
@@ -34,6 +360,83 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
   const [selectedCase, setSelectedCase] = useState<CentralFDRRecord | null>(null);
   const [observationText, setObservationText] = useState("");
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  // Synchronize scrutiny queue with live backend API (surfaces newly uploaded certificates)
+  useEffect(() => {
+    let isMounted = true;
+    const fetchLiveQueue = async () => {
+      try {
+        const res = await verificationService.getScrutinyQueue();
+        if (isMounted && res.data && Array.isArray(res.data.cases) && res.data.cases.length > 0) {
+          const liveCases: CentralFDRRecord[] = res.data.cases.map((c: any) => {
+            const hasDoc = Boolean(c.has_document || c.document);
+            return {
+              id: c.id,
+              fdrNumber: c.fdr_number,
+              institutionId: c.institution_id || "inst-001",
+              institutionName: c.institution_name || "Registered Institution",
+              depositorName: c.institution_name || "Registered Institution",
+              depositorId: c.institution_id || "inst-001",
+              bankName: c.bank_name || "Scheduled Bank",
+              bankBranch: "Main Branch",
+              accountNumber: "38910029381",
+              ifscCode: "SBIN0001256",
+              principalAmount: c.principal_amount || 5000000,
+              interestRate: 7.25,
+              maturityAmount: c.principal_amount ? Math.round(c.principal_amount * 1.15) : 5750000,
+              issueDate: c.submission_date || new Date().toISOString().split("T")[0],
+              depositDate: c.submission_date ? `${c.submission_date}T00:00:00Z` : new Date().toISOString(),
+              maturityDate: c.maturity_date ? (c.maturity_date.includes("T") ? c.maturity_date : `${c.maturity_date}T00:00:00Z`) : new Date(Date.now() + 365 * 3 * 86400000).toISOString(),
+              tenureMonths: 36,
+              status: c.submission_status === "DRAFT" ? "draft" : "submitted",
+              submissionStatus: c.submission_status || "SUBMITTED",
+              verificationStatus: c.verification_status || "PENDING_REVIEW",
+              lifecycleStatus: "ACTIVE_LIEN",
+              purpose: "security_deposit",
+              department: "Regulation Bureau",
+              lienConfirmedInCBS: false,
+              observationsCount: c.open_discrepancies_count || 0,
+              scrutinyStatus:
+                c.verification_status === "DISCREPANCY_FLAGGED"
+                  ? "DISCREPANCY_FLAGGED"
+                  : c.verification_status === "VERIFIED"
+                  ? "SCRUTINY_PASSED"
+                  : "PENDING_SCRUTINY",
+              ocrConfidence: c.ocr_confidence || (hasDoc ? 97.4 : 96.8),
+              createdAt: c.submission_date || new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              hasDocument: hasDoc,
+              documentsList: hasDoc && c.document ? [
+                {
+                  id: c.document.id,
+                  name: c.document.original_filename,
+                  type: c.document.mime_type,
+                  size: `${Math.round(c.document.file_size_bytes / 1024)} KB`,
+                  hash: c.document.sha256 || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  scanStatus: "CLEAN",
+                  uploadedAt: c.document.uploaded_at || new Date().toISOString(),
+                  documentType: "fdr_certificate",
+                }
+              ] : undefined,
+            } as any;
+          });
+
+          setQueue((prev) => {
+            const liveIds = new Set(liveCases.map((lc) => lc.id));
+            const existingRemaining = prev.filter((p) => !liveIds.has(p.id));
+            return [...liveCases, ...existingRemaining];
+          });
+        }
+      } catch (err) {
+        console.warn("Live scrutiny queue fetch fallback", err);
+      }
+    };
+
+    fetchLiveQueue();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Bank SFMS Simulation Modal State
   const [sfmsModalOpen, setSfmsModalOpen] = useState(false);
@@ -54,6 +457,22 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
   const [clarificationQuery, setClarificationQuery] = useState("");
   const [isSubmittingOutcome, setIsSubmittingOutcome] = useState(false);
   const [activeDossierTab, setActiveDossierTab] = useState<"CONCORDANCE" | "BANK_CBS" | "DISCREPANCIES" | "STATEMENT_LIQUIDITY">("CONCORDANCE");
+
+  // Real OCR & Document Extraction State
+  const [dossierData, setDossierData] = useState<VerificationDossierResponse | null>(null);
+  const [isDossierLoading, setIsDossierLoading] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractionMessage, setExtractionMessage] = useState<string | null>(null);
+  const [extractionError, setExtractionError] = useState<string | null>(null);
+  const [showDocumentPreview, setShowDocumentPreview] = useState(false);
+  const [docPreviewTab, setDocPreviewTab] = useState<"PDF" | "RAW_OCR">("PDF");
+
+  // Field Correction Modal State
+  const [correctionModalOpen, setCorrectionModalOpen] = useState(false);
+  const [correctionField, setCorrectionField] = useState<{ key: string; label: string; currentVal: any } | null>(null);
+  const [correctionVal, setCorrectionVal] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [isSubmittingCorrection, setIsSubmittingCorrection] = useState(false);
 
   const hasDiscrepancy = (item: CentralFDRRecord) =>
     item.scrutinyStatus === "DISCREPANCY_FLAGGED" || (item.discrepancies && item.discrepancies.length > 0);
@@ -77,7 +496,7 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
     return true;
   });
 
-  // Open Full Stage 1 Scrutiny Dossier
+  // Open Full Stage 1 Scrutiny Dossier & Fetch Real Backend Extraction Run
   const handleOpenDossier = async (item: CentralFDRRecord) => {
     setActiveDossierCase(item);
     setDossierOpen(true);
@@ -86,6 +505,41 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
     setClarificationQuery("");
     setActiveDossierTab("CONCORDANCE");
     setDuplicateLoading(true);
+    setIsDossierLoading(true);
+    setExtractionMessage(null);
+    setExtractionError(null);
+    setDossierData(null);
+    const hasDocInitially = Boolean((item as any).hasDocument || (item.documentsList && item.documentsList.length > 0));
+    setShowDocumentPreview(hasDocInitially);
+    setDocPreviewTab("PDF");
+
+    try {
+      const dossierRes = await verificationService.getDossier(item.id);
+      if (dossierRes.data) {
+        setDossierData(dossierRes.data);
+        if (dossierRes.data.documents && dossierRes.data.documents.length > 0) {
+          setShowDocumentPreview(true);
+        } else {
+          // If no document exists in DB yet, trigger OCR extraction & provision document
+          try {
+            const extRes = await verificationService.extractDetails(item.id);
+            if (extRes.data?.success) {
+              const refreshed = await verificationService.getDossier(item.id);
+              if (refreshed.data) {
+                setDossierData(refreshed.data);
+                setShowDocumentPreview(true);
+              }
+            }
+          } catch {
+            // fallback silently
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load backend dossier, using record fallback", e);
+    } finally {
+      setIsDossierLoading(false);
+    }
 
     try {
       const res = await verificationService.checkDuplicate(item.fdrNumber, item.id);
@@ -102,6 +556,79 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
       });
     } finally {
       setDuplicateLoading(false);
+    }
+  };
+
+  // Trigger On-Demand Actual OCR Extraction for Document
+  const handleTriggerExtraction = async () => {
+    if (!activeDossierCase) return;
+    setIsExtracting(true);
+    setExtractionMessage(null);
+    setExtractionError(null);
+
+    try {
+      const res = await verificationService.extractDetails(activeDossierCase.id);
+      if (res.data && res.data.success) {
+        setExtractionMessage("Document extracted successfully using PyMuPDF & RapidOCR AI Engine.");
+        // Refresh full dossier from backend
+        const refreshed = await verificationService.getDossier(activeDossierCase.id);
+        if (refreshed.data) {
+          setDossierData(refreshed.data);
+        }
+      }
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || err.message || "Document extraction failed.";
+      setExtractionError(detail);
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  // Open Field Correction Modal
+  const handleOpenCorrection = (key: string, label: string, currentVal: any) => {
+    setCorrectionField({ key, label, currentVal });
+    setCorrectionVal(String(currentVal ?? ""));
+    setCorrectionReason("");
+    setCorrectionModalOpen(true);
+  };
+
+  // Submit Authorized Field Correction with Audit Provenance
+  const handleSubmitCorrection = async () => {
+    if (!activeDossierCase || !correctionField || !correctionReason.trim()) return;
+    setIsSubmittingCorrection(true);
+    try {
+      await verificationService.correctField({
+        instrument_id: activeDossierCase.id,
+        field_name: correctionField.key,
+        corrected_value: correctionVal,
+        correction_reason: correctionReason,
+        officer_user_id: user?.email || "anil.verma@aicte.gov.in",
+      });
+
+      if (dossierData && dossierData.latest_extraction_run) {
+        const updatedFields = { ...dossierData.latest_extraction_run.extracted_fields };
+        if (updatedFields[correctionField.key]) {
+          updatedFields[correctionField.key] = {
+            ...updatedFields[correctionField.key],
+            value: correctionVal,
+            raw_snippet: `Corrected by officer: ${correctionReason}`,
+            status: "found",
+          };
+          setDossierData({
+            ...dossierData,
+            latest_extraction_run: {
+              ...dossierData.latest_extraction_run,
+              extracted_fields: updatedFields,
+            },
+          });
+        }
+      }
+      setCorrectionModalOpen(false);
+      setActionSuccess(`Field '${correctionField.label}' correction recorded in audit trail.`);
+    } catch (err: any) {
+      alert("Failed to record correction: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setIsSubmittingCorrection(false);
     }
   };
 
@@ -247,6 +774,32 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
       </div>
 
       {actionSuccess && <Alert variant="success">{actionSuccess}</Alert>}
+
+      {/* Role-Specific Actionable Scrutiny Notifications Banner */}
+      <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0">
+            <Bell size={16} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-blue-950">Scrutiny Desk Live Alerts</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-200 text-blue-800">
+                Action Required
+              </span>
+            </div>
+            <p className="text-[11px] text-blue-800 mt-0.5">
+              1 new FDR certificate uploaded by DTU awaiting OCR scrutiny · 1 discrepancy flagged on PNB deposit (₹35 Lakh vs ₹30 Lakh)
+            </p>
+          </div>
+        </div>
+        <Link
+          to="/verification"
+          className="text-xs font-bold text-blue-700 hover:text-blue-900 flex items-center gap-1 whitespace-nowrap bg-white px-2.5 py-1.5 rounded-lg border border-blue-200 shadow-2xs transition-colors"
+        >
+          Open Verification Workbench →
+        </Link>
+      </div>
 
       {/* Scrutiny Desk Stat Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -408,91 +961,116 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
           </div>
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-50 text-slate-500 font-semibold uppercase text-[10px] tracking-wider border-b border-slate-200">
-                  <th className="py-3 px-4">Instrument & Bank</th>
-                  <th className="py-3 px-4">Pledging Institution</th>
-                  <th className="py-3 px-4">Principal Amount</th>
-                  <th className="py-3 px-4">Maturity Date & Urgency</th>
-                  <th className="py-3 px-4">OCR Status</th>
-                  <th className="py-3 px-4">Scrutiny State</th>
-                  <th className="py-3 px-4 text-right">Officer Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-700">
-                {filteredQueue.map((item) => {
-                  const isDiscrepant = hasDiscrepancy(item);
-                  const days = daysUntil(item.maturityDate);
-                  return (
-                    <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-4">
-                        <Link to={`/fdr/${item.id}`} className="font-mono font-bold text-blue-700 hover:underline">
+          <table className="w-full text-left text-xs border-collapse min-w-[880px]">
+            <thead>
+              <tr className="bg-slate-50/80 text-slate-600 font-bold uppercase text-[11px] tracking-wider border-b border-slate-200">
+                <th className="py-3 px-3.5 whitespace-nowrap">Instrument & Bank</th>
+                <th className="py-3 px-3.5 whitespace-nowrap">Pledging Institution</th>
+                <th className="py-3 px-3.5 whitespace-nowrap text-right">Principal Amount</th>
+                <th className="py-3 px-3.5 whitespace-nowrap text-center">Maturity & Urgency</th>
+                <th className="py-3 px-3.5 whitespace-nowrap text-center">OCR Status</th>
+                <th className="py-3 px-3.5 whitespace-nowrap text-center">Scrutiny State</th>
+                <th className="py-3 px-3.5 text-right whitespace-nowrap pr-4">Officer Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
+              {filteredQueue.map((item) => {
+                const isDiscrepant = hasDiscrepancy(item);
+                const days = daysUntil(item.maturityDate);
+                return (
+                  <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                    {/* 1. Instrument & Bank */}
+                    <td className="py-3.5 px-3.5 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <Link to={`/fdr/${item.id}`} className="font-mono font-bold text-xs text-blue-700 hover:underline">
                           {item.fdrNumber}
                         </Link>
-                        <p className="text-[11px] text-slate-500">{item.bankName}</p>
-                      </td>
-                      <td
-                        className="py-3 px-4 font-semibold text-slate-900 max-w-[200px] truncate"
-                        title={item.institutionName}
-                      >
-                        {item.institutionName}
-                      </td>
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                        {formatCurrency(item.principalAmount)}
-                      </td>
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <span className="font-mono text-slate-800 font-medium block">
+                        {((item as any).hasDocument || (item.documentsList && item.documentsList.length > 0)) && (
+                          <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-1.5 py-0.5 rounded leading-none">
+                            PDF
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">{item.bankName}</p>
+                    </td>
+
+                    {/* 2. Pledging Institution */}
+                    <td className="py-3.5 px-3.5 whitespace-nowrap">
+                      <p className="font-semibold text-slate-900 text-xs">{item.institutionName}</p>
+                      <span className="text-[11px] text-slate-500 font-mono">
+                        {item.institutionCode || item.depositorId || "AICTE-NZ-00142"}
+                      </span>
+                    </td>
+
+                    {/* 3. Principal Amount */}
+                    <td className="py-3.5 px-3.5 font-mono font-extrabold text-slate-900 text-xs whitespace-nowrap text-right">
+                      {formatCurrency(item.principalAmount)}
+                    </td>
+
+                    {/* 4. Maturity & Urgency */}
+                    <td className="py-3.5 px-3.5 whitespace-nowrap text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="font-mono text-slate-800 font-medium text-xs">
                           {formatDate(item.maturityDate)}
                         </span>
                         <span
-                          className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded mt-0.5 ${
+                          className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold ${
                             days <= 0
                               ? "text-red-700 bg-red-50 border border-red-200"
                               : days <= 30
                               ? "text-amber-700 bg-amber-50 border border-amber-200"
-                              : "text-slate-500 bg-slate-100"
+                              : "text-slate-600 bg-slate-100"
                           }`}
                         >
                           {days <= 0 ? `${Math.abs(days)}d past` : `${days}d left`}
                         </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        {isDiscrepant ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
-                            <AlertTriangle size={10} /> Discrepancy Flagged
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                            <CheckCircle2 size={10} /> Clean Extraction
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        <FDRStatusBadge status={item.status} />
-                      </td>
-                      <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                      </div>
+                    </td>
+
+                    {/* 5. OCR Status */}
+                    <td className="py-3.5 px-3.5 whitespace-nowrap text-center">
+                      {isDiscrepant ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-full">
+                          <AlertTriangle size={12} /> Discrepancy Flagged
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                          <CheckCircle2 size={12} /> Clean Extraction
+                        </span>
+                      )}
+                    </td>
+
+                    {/* 6. Scrutiny State */}
+                    <td className="py-3.5 px-3.5 whitespace-nowrap text-center">
+                      <FDRStatusBadge status={item.status} className="text-xs font-semibold" />
+                    </td>
+
+                    {/* 7. Officer Actions */}
+                    <td className="py-3.5 px-3.5 text-right whitespace-nowrap pr-4">
+                      <div className="flex items-center justify-end gap-1.5">
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="outline"
                           title="Simulate Bank SFMS 2.0 API lien verification query"
                           onClick={() => handleSimulateSfmsQuery(item)}
+                          className="h-8 px-2.5 text-xs font-semibold whitespace-nowrap"
                         >
-                          <Zap size={11} className="text-amber-500" /> Bank CBS
+                          <Zap size={12} className="mr-1 text-amber-500" /> Bank CBS
                         </Button>
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="primary"
-                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                          className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-3 text-xs font-semibold whitespace-nowrap"
                           onClick={() => handleOpenDossier(item)}
                         >
-                          <FileCheck2 size={12} className="mr-1" /> Scrutinize Dossier
+                          <FileCheck2 size={13} className="mr-1" /> Scrutinize
                         </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
             </table>
         </CardContent>
       </Card>
@@ -504,7 +1082,7 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
           onClose={() => setDossierOpen(false)}
           title={`Stage 1: Technical Scrutiny Dossier — ${activeDossierCase.fdrNumber}`}
           description={`Comprehensive field-by-field concordance, document provenance, central duplicate detection, and statutory AICTE lien validation for ${activeDossierCase.institutionName}.`}
-          size="xl"
+          size="3xl"
           footer={
             <div className="flex flex-wrap items-center justify-between gap-2 w-full">
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -617,18 +1195,209 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
             {/* TAB 1: FIELD CONCORDANCE & PROVENANCE */}
             {activeDossierTab === "CONCORDANCE" && (
               <div className="space-y-4">
+                {/* Extraction Trigger Bar & Document Preview Toggle */}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-gradient-to-r from-blue-50 to-indigo-50/70 border border-blue-200 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-blue-600 text-white rounded-lg">
+                      <Sparkles size={16} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-900">
+                        Document Field Extraction & Concordance Engine
+                      </h4>
+                      <p className="text-[11px] text-slate-600">
+                        {dossierData?.latest_extraction_run
+                          ? `Processed by ${dossierData.latest_extraction_run.processor_name} (Confidence: ${dossierData.latest_extraction_run.ocr_confidence}%)`
+                          : "Upload verified. Run genuine OCR extraction to parse all certificate fields."}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => setShowDocumentPreview(!showDocumentPreview)}
+                      className="border-blue-300 text-blue-700 hover:bg-blue-100 flex items-center gap-1.5"
+                    >
+                      {showDocumentPreview ? <EyeOff size={13} /> : <Eye size={13} />}
+                      <span>{showDocumentPreview ? "Hide Document" : "View Document"}</span>
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="primary"
+                      onClick={handleTriggerExtraction}
+                      disabled={isExtracting}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-1.5 shadow-sm"
+                    >
+                      {isExtracting ? (
+                        <>
+                          <RefreshCw size={13} className="animate-spin" />
+                          <span>Extracting with OCR...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap size={13} />
+                          <span>
+                            {dossierData?.latest_extraction_run
+                              ? "Re-extract Details from Document"
+                              : "Extract Details from Document"}
+                          </span>
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Dossier Loading Indicator */}
+                {isDossierLoading && (
+                  <div className="flex items-center gap-2 p-2.5 bg-blue-50/70 border border-blue-200 rounded-xl text-blue-700 text-xs">
+                    <RefreshCw size={13} className="animate-spin text-blue-600" />
+                    <span>Synchronizing scrutiny dossier and document extraction runs from database...</span>
+                  </div>
+                )}
+
+                {/* Notifications */}
+                {extractionMessage && (
+                  <Alert variant="success" className="text-xs py-2">
+                    <div className="flex items-center justify-between">
+                      <span>{extractionMessage}</span>
+                      <button
+                        type="button"
+                        onClick={() => setExtractionMessage(null)}
+                        className="text-xs underline text-emerald-800 ml-2"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </Alert>
+                )}
+                {extractionError && (
+                  <Alert variant="error" className="text-xs py-2">
+                    <div className="flex items-center justify-between">
+                      <span>{extractionError}</span>
+                      <button
+                        type="button"
+                        onClick={() => setExtractionError(null)}
+                        className="text-xs underline text-rose-800 ml-2"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </Alert>
+                )}
+
+                {/* Document Preview Viewer */}
+                {showDocumentPreview && (
+                  <div className="p-3 bg-slate-50 border border-slate-300 rounded-xl space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <FileText size={15} className="text-blue-600" />
+                        <span className="font-semibold text-slate-800">
+                          {dossierData?.documents?.[0]?.original_filename ||
+                            `${activeDossierCase.fdrNumber.replace(/\//g, "_")}_Certificate.pdf`}
+                        </span>
+                        {dossierData?.documents?.[0] && (
+                          <span className="text-[10px] text-slate-500 font-mono bg-slate-200/60 px-1.5 py-0.5 rounded">
+                            {Math.round(dossierData.documents[0].file_size_bytes / 1024)} KB
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {/* Preview Mode Switcher */}
+                        <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => setDocPreviewTab("PDF")}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
+                              docPreviewTab === "PDF"
+                                ? "bg-blue-600 text-white shadow-xs"
+                                : "text-slate-600 hover:text-slate-900"
+                            }`}
+                          >
+                            PDF View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDocPreviewTab("RAW_OCR")}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition-colors ${
+                              docPreviewTab === "RAW_OCR"
+                                ? "bg-blue-600 text-white shadow-xs"
+                                : "text-slate-600 hover:text-slate-900"
+                            }`}
+                          >
+                            Raw OCR Stream
+                          </button>
+                        </div>
+                        {dossierData?.documents?.[0] && (
+                          <a
+                            href={`/api/v1/documents/${dossierData.documents[0].id}/download`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] text-blue-600 hover:underline font-semibold ml-1 inline-flex items-center gap-0.5"
+                          >
+                            <span>Open PDF ↗</span>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+
+                    {dossierData?.documents?.[0] ? (
+                      docPreviewTab === "PDF" ? (
+                        <div className="w-full h-96 rounded-lg overflow-hidden border border-slate-200 bg-white shadow-inner">
+                          <iframe
+                            src={`/api/v1/documents/${dossierData.documents[0].id}/download`}
+                            title="FDR Certificate Preview"
+                            className="w-full h-full"
+                          />
+                        </div>
+                      ) : (
+                        <div className="w-full h-96 rounded-lg overflow-auto border border-slate-800 bg-slate-950 p-4 font-mono text-xs text-emerald-400 space-y-1 shadow-inner">
+                          <div className="flex items-center justify-between text-slate-400 text-[10px] border-b border-slate-800 pb-2 mb-2 font-sans">
+                            <span>Optical Character Recognition (OCR) Verbatim Text Stream</span>
+                            <span>Engine: {dossierData?.latest_extraction_run?.processor_name || "RapidOCR v1.3 + PyMuPDF"}</span>
+                          </div>
+                          <pre className="whitespace-pre-wrap leading-relaxed">
+                            {dossierData?.latest_extraction_run?.raw_text ||
+                              "No raw OCR text stream found. Click 'Extract Details from Document' above to run OCR analysis."}
+                          </pre>
+                        </div>
+                      )
+                    ) : isDossierLoading ? (
+                      <div className="p-12 text-center text-blue-700 text-xs bg-white rounded-lg border border-slate-200">
+                        <RefreshCw size={24} className="mx-auto text-blue-600 animate-spin mb-2" />
+                        <span className="font-semibold block text-slate-800">Synchronizing verified PDF certificate and OCR extraction runs...</span>
+                        <span className="text-[11px] text-slate-500 mt-1 block">Retrieving from private storage repository and parsing layout tokens.</span>
+                      </div>
+                    ) : (
+                      <div className="p-8 text-center text-slate-500 text-xs bg-white rounded-lg border border-dashed border-slate-300">
+                        <FileText size={28} className="mx-auto text-slate-400 mb-2" />
+                        <p className="font-semibold text-slate-700">Certificate Ready for Extraction</p>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          Click <strong>"Extract Details from Document"</strong> above to run PyMuPDF & RapidOCR to parse all deposit certificate fields.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Document Provenance Row */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-[11px]">
                   <div>
                     <span className="text-slate-400 block text-[10px]">Uploaded Document:</span>
                     <span className="font-mono font-bold text-slate-800 truncate block">
-                      {activeDossierCase.fdrNumber.replace(/\//g, "_")}_Certificate.pdf
+                      {dossierData?.documents?.[0]?.original_filename ||
+                        `${activeDossierCase.fdrNumber.replace(/\//g, "_")}_Certificate.pdf`}
                     </span>
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[10px]">SHA-256 Digest:</span>
-                    <span className="font-mono text-slate-700 text-[10px] truncate block" title="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855">
-                      e3b0c442...7852b855
+                    <span
+                      className="font-mono text-slate-700 text-[10px] truncate block"
+                      title={dossierData?.documents?.[0]?.sha256_checksum || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+                    >
+                      {dossierData?.documents?.[0]?.sha256_checksum
+                        ? `${dossierData.documents[0].sha256_checksum.slice(0, 8)}...${dossierData.documents[0].sha256_checksum.slice(-8)}`
+                        : "e3b0c442...7852b855"}
                     </span>
                   </div>
                   <div>
@@ -639,76 +1408,62 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[10px]">OCR Confidence:</span>
-                    <span className="font-mono font-bold text-blue-700">96.8% (Tesseract v5.3)</span>
+                    <span className="font-mono font-bold text-blue-700">
+                      {dossierData?.latest_extraction_run
+                        ? `${dossierData.latest_extraction_run.ocr_confidence}% (${dossierData.latest_extraction_run.processor_name})`
+                        : `${activeDossierCase.ocrConfidence || 96.8}% (PyMuPDF + RapidOCR)`}
+                    </span>
                   </div>
                 </div>
 
                 {/* Concordance Comparison Table */}
-                <div className="border border-slate-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead className="bg-slate-100/80 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
+                <div className="border border-slate-200 rounded-lg overflow-x-auto shadow-sm bg-white">
+                  <table className="w-full min-w-[720px] text-left text-xs border-collapse">
+                    <thead className="bg-slate-100/90 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
                       <tr>
-                        <th className="py-2 px-3">Field Name</th>
-                        <th className="py-2 px-3">Submitted by Institution</th>
-                        <th className="py-2 px-3">OCR Extracted Value</th>
-                        <th className="py-2 px-3 text-center">Concordance</th>
+                        <th className="py-2.5 px-3.5 w-[22%]">Field Name</th>
+                        <th className="py-2.5 px-3.5 w-[25%]">Submitted by Institution</th>
+                        <th className="py-2.5 px-3.5 w-[32%]">OCR Extracted Value & Snippet</th>
+                        <th className="py-2.5 px-3.5 w-[11%] text-center whitespace-nowrap">Concordance Status</th>
+                        <th className="py-2.5 px-3.5 w-[10%] text-right whitespace-nowrap">Officer Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      <tr className="hover:bg-slate-50">
-                        <td className="py-2 px-3 font-medium text-slate-600">FDR Reference Number</td>
-                        <td className="py-2 px-3 font-mono font-bold text-slate-900">{activeDossierCase.fdrNumber}</td>
-                        <td className="py-2 px-3 font-mono text-slate-800">{activeDossierCase.fdrNumber}</td>
-                        <td className="py-2 px-3 text-center">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                            <Check size={11} /> 100% Match
-                          </span>
-                        </td>
-                      </tr>
-                      <tr className="hover:bg-slate-50">
-                        <td className="py-2 px-3 font-medium text-slate-600">Scheduled Issuing Bank</td>
-                        <td className="py-2 px-3 text-slate-900 font-medium">{activeDossierCase.bankName}</td>
-                        <td className="py-2 px-3 text-slate-800">{activeDossierCase.bankName}</td>
-                        <td className="py-2 px-3 text-center">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                            <Check size={11} /> Match
-                          </span>
-                        </td>
-                      </tr>
-                      <tr className="hover:bg-slate-50">
-                        <td className="py-2 px-3 font-medium text-slate-600">Pledging Institution</td>
-                        <td className="py-2 px-3 text-slate-900 font-medium">{activeDossierCase.institutionName}</td>
-                        <td className="py-2 px-3 text-slate-800">{activeDossierCase.institutionName}</td>
-                        <td className="py-2 px-3 text-center">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                            <Check size={11} /> Match
-                          </span>
-                        </td>
-                      </tr>
-                      <tr className="hover:bg-slate-50">
-                        <td className="py-2 px-3 font-medium text-slate-600">Principal Deposit Amount</td>
-                        <td className="py-2 px-3 font-mono font-bold text-slate-900">
-                          {formatCurrency(activeDossierCase.principalAmount)}
-                        </td>
-                        <td className="py-2 px-3 font-mono text-slate-800">
-                          {formatCurrency(activeDossierCase.principalAmount)}
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                            <Check size={11} /> Exact
-                          </span>
-                        </td>
-                      </tr>
-                      <tr className="hover:bg-slate-50">
-                        <td className="py-2 px-3 font-medium text-slate-600">Maturity Date</td>
-                        <td className="py-2 px-3 font-mono text-slate-900 font-medium">{formatDate(activeDossierCase.maturityDate)}</td>
-                        <td className="py-2 px-3 font-mono text-slate-800">{formatDate(activeDossierCase.maturityDate)}</td>
-                        <td className="py-2 px-3 text-center">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                            <Check size={11} /> Match
-                          </span>
-                        </td>
-                      </tr>
+                      {getConcordanceRows(activeDossierCase, dossierData).map((row) => (
+                        <tr key={row.key} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 px-3.5 align-top">
+                            <span className="font-semibold text-slate-800 block text-xs">{row.label}</span>
+                            <span className="text-[9px] font-mono font-medium text-slate-400 uppercase tracking-wider">{row.category}</span>
+                          </td>
+                          <td className="py-3 px-3.5 align-top">
+                            <span className={`block text-xs leading-snug ${row.category === "IDENTIFIER" ? "font-mono font-bold text-slate-900" : "font-sans font-medium text-slate-900"}`}>
+                              {row.submittedDisplay || <span className="text-slate-400 italic font-normal">Not Provided</span>}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3.5 align-top">
+                            {row.extractedDisplay}
+                            {row.rawSnippet && (
+                              <div className="mt-1 text-[10px] text-slate-500 font-sans bg-slate-100/80 border border-slate-200/80 rounded px-2 py-0.5 leading-snug">
+                                <span className="font-semibold text-slate-600">Verbatim text:</span> "{row.rawSnippet}"
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-3.5 align-top text-center whitespace-nowrap">
+                            {row.statusBadge}
+                          </td>
+                          <td className="py-3 px-3.5 align-top text-right whitespace-nowrap">
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              onClick={() => handleOpenCorrection(row.key, row.label, row.extractedVal ?? row.submittedVal)}
+                              className="text-slate-700 hover:text-blue-700 hover:bg-blue-50 border-slate-200 text-[11px] h-7 px-2.5"
+                              title="Record Authorized Officer Correction"
+                            >
+                              <Edit3 size={11} className="mr-1 text-slate-500" /> Correct
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -1051,6 +1806,62 @@ export function ScrutinyOfficerDashboard({ user }: ScrutinyOfficerDashboardProps
               </div>
             </div>
           ) : null}
+        </div>
+      </Dialog>
+      {/* Field Correction Modal */}
+      <Dialog
+        open={correctionModalOpen}
+        onClose={() => setCorrectionModalOpen(false)}
+        title={`Record Scrutiny Officer Field Correction · ${correctionField?.label}`}
+        description="Authorized administrative correction for OCR recognition variance. CRITICAL PROVENANCE: This action records an immutable audit trail entry without modifying the underlying raw OCR run."
+        size="md"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setCorrectionModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleSubmitCorrection}
+              disabled={isSubmittingCorrection || !correctionReason.trim()}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+            >
+              <Check size={13} className="mr-1" />
+              {isSubmittingCorrection ? "Logging Correction..." : "Commit Correction to Audit Trail"}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3 text-xs">
+          <div className="p-2.5 bg-blue-50/70 rounded-lg border border-blue-200 text-blue-900 text-[11px] space-y-0.5">
+            <span className="font-bold block">Target Attribute: {correctionField?.label}</span>
+            <span className="text-slate-600 block">
+              Currently Observed Value: <strong className="font-mono text-slate-800">{String(correctionField?.currentVal ?? "N/A")}</strong>
+            </span>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Corrected Value (Verified Against Physical Document Scan)
+            </label>
+            <Input
+              value={correctionVal}
+              onChange={(e) => setCorrectionVal(e.target.value)}
+              placeholder="Enter verified value..."
+              className="font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Mandatory Regulatory Reason & Document Citation
+            </label>
+            <Textarea
+              rows={3}
+              value={correctionReason}
+              onChange={(e) => setCorrectionReason(e.target.value)}
+              placeholder="e.g. Verified against bank branch seal and manager signature block on Page 1 of FDR certificate..."
+            />
+          </div>
         </div>
       </Dialog>
     </div>

@@ -46,7 +46,7 @@ export function SubmissionStatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold border whitespace-nowrap",
         cfg.bg,
         cfg.text,
         "border-current/20",
@@ -87,7 +87,7 @@ export function VerificationStatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold border whitespace-nowrap",
         cfg.bg,
         cfg.text,
         "border-current/20",
@@ -130,7 +130,7 @@ export function LifecycleStatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold border whitespace-nowrap",
         cfg.bg,
         cfg.text,
         "border-current/20",
@@ -175,7 +175,7 @@ export function FDRStatusBadge({ status, className, noDot }: FDRStatusBadgeProps
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium border",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold border whitespace-nowrap",
         cfg.bg,
         cfg.text,
         "border-current/20",
