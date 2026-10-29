@@ -50,6 +50,7 @@ class ScrutinyObservationCreate(BaseModel):
     requested_action: str = Field(..., min_length=5)
     officer_name: str
     officer_id: str
+    officer_role: Optional[str] = "scrutiny_officer"
 
 class ObservationResponse(BaseModel):
     response_notes: str = Field(..., min_length=5)
@@ -207,7 +208,7 @@ async def create_scrutiny_observation(
     Only scrutiny_officer and approving_authority may issue observations.
     """
     # Derive role from authenticated token or fall back to payload for demo tokens
-    caller_role = current_user.role if current_user else payload.officer_role
+    caller_role = current_user.role if current_user else (getattr(payload, "officer_role", None) or "scrutiny_officer")
 
     if caller_role in ["institution_representative", "depositor", "admin"]:
         raise HTTPException(
@@ -347,9 +348,18 @@ async def respond_to_observation(
         raise HTTPException(status_code=404, detail="Observation not found.")
 
     now = datetime.now(timezone.utc)
+    
+    # Resolve valid user ID for database foreign key constraint
+    actor_user = db.query(User).filter(User.id == payload.responded_by).first()
+    if not actor_user:
+        actor_user = db.query(User).filter(User.display_name.ilike(f"%{payload.responded_by}%")).first()
+    if not actor_user:
+        actor_user = db.query(User).filter(User.role == "institution_representative").first() or db.query(User).first()
+    actor_id = actor_user.id if actor_user else None
+
     disc.resolution_status = "resolved"
     disc.resolution_notes = payload.response_notes
-    disc.resolved_by_user_id = payload.responded_by
+    disc.resolved_by_user_id = actor_id
     disc.resolved_at = now
 
     verif = db.query(InstrumentVerification).filter(InstrumentVerification.id == disc.verification_id).first()
@@ -361,7 +371,7 @@ async def respond_to_observation(
     db.add(
         AuditEvent(
             id=f"aud-{uuid.uuid4().hex[:6]}",
-            actor_user_id=payload.responded_by,
+            actor_user_id=actor_id,
             institution_id=payload.institution_id,
             instrument_id=verif.instrument_id if verif else None,
             action="OBSERVATION_RESPONSE_SUBMITTED",

@@ -67,7 +67,7 @@ class AccountAggregatorService:
 
         now_dt = datetime.now(timezone.utc)
         consent = AccountAggregatorConsent(
-            id=f"aac-{uuid.uuid4()}",
+            id=f"aac-{uuid.uuid4().hex[:28]}",
             institution_id=request.institution_id,
             fip_id=request.fip_id,
             fip_name=request.fip_name,
@@ -93,7 +93,7 @@ class AccountAggregatorService:
 
         # Audit event
         audit = AuditEventModel(
-            id=f"audit-{uuid.uuid4()}",
+            id=f"aud-{uuid.uuid4().hex[:28]}",
             actor_user_id=initiator_user_id,
             action="AA_CONSENT_INITIATED",
             entity_type="account_aggregator_consents",
@@ -196,7 +196,7 @@ class AccountAggregatorService:
             )
             if any_consent and any_consent.status == "PENDING":
                 retrieval = AccountAggregatorRetrieval(
-                    id=f"aar-{uuid.uuid4()}",
+                    id=f"aar-{uuid.uuid4().hex[:28]}",
                     consent_id=any_consent.id,
                     instrument_id=instrument.id,
                     institution_id=instrument.institution_id,
@@ -236,7 +236,7 @@ class AccountAggregatorService:
 
         # Build retrieval record
         retrieval = AccountAggregatorRetrieval(
-            id=f"aar-{uuid.uuid4()}",
+            id=f"aar-{uuid.uuid4().hex[:28]}",
             consent_id=consent.id,
             instrument_id=instrument.id,
             institution_id=instrument.institution_id,
@@ -261,7 +261,7 @@ class AccountAggregatorService:
 
         # Audit Event
         audit = AuditEventModel(
-            id=f"audit-{uuid.uuid4()}",
+            id=f"aud-{uuid.uuid4().hex[:28]}",
             actor_user_id=caller_user_id,
             instrument_id=instrument.id,
             action="AA_TELEMETRY_FETCHED",
@@ -308,7 +308,7 @@ class AccountAggregatorService:
         consent.updated_at = datetime.now(timezone.utc)
 
         audit = AuditEventModel(
-            id=f"audit-{uuid.uuid4()}",
+            id=f"aud-{uuid.uuid4().hex[:28]}",
             actor_user_id=user_id,
             action="AA_CONSENT_REVOKED",
             entity_type="account_aggregator_consents",

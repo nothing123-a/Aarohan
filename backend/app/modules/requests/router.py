@@ -232,14 +232,15 @@ async def submit_release_request(
             payload.institution_id = user_inst_id
 
     # Locate instrument in database
-    inst = (
-        db.query(FinancialInstrument)
-        .filter(
-            (FinancialInstrument.id == payload.fdr_id)
-            | (FinancialInstrument.reference_number == payload.fdr_number)
-        )
-        .first()
-    )
+    inst = None
+    if payload.fdr_id:
+        inst = db.query(FinancialInstrument).filter(FinancialInstrument.id == payload.fdr_id).first()
+    if not inst and payload.fdr_number:
+        inst_query = db.query(FinancialInstrument).filter(FinancialInstrument.reference_number == payload.fdr_number)
+        if payload.institution_id:
+            inst = inst_query.filter(FinancialInstrument.institution_id == payload.institution_id).first()
+        if not inst:
+            inst = inst_query.first()
 
     # Ensure institution exists in database
     db_inst = db.query(Institution).filter(Institution.id == payload.institution_id).first()
@@ -369,6 +370,12 @@ async def record_release_decision(
     user = _safe_user(current_user)
     caller_role = user.role if user else payload.officer_role
     caller_id   = user.id   if user else (payload.officer_id or "usr-aa-01")
+
+    # Ensure caller_id exists in users table for database FK constraints
+    if not db.query(User).filter(User.id == caller_id).first():
+        fallback_user = db.query(User).filter(User.role == caller_role).first() or db.query(User).first()
+        if fallback_user:
+            caller_id = fallback_user.id
 
     # Check 1: Institution representatives barred from all decision actions
     if caller_role in ["institution_representative", "depositor"]:
