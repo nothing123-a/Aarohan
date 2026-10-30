@@ -269,14 +269,16 @@ export default function FDRListPage() {
           { label: "FDR Management" },
         ]}
         actions={
-          <div className="flex items-center gap-2">
-            <Button variant="primary" size="sm" asChild>
-              <Link to="/fdr/new" id="fdr-new-btn">
-                <Plus size={15} />
-                Submit New FDR
-              </Link>
-            </Button>
-          </div>
+          isInstitution ? (
+            <div className="flex items-center gap-2">
+              <Button variant="primary" size="sm" asChild>
+                <Link to="/fdr/new" id="fdr-new-btn">
+                  <Plus size={15} />
+                  Submit New FDR
+                </Link>
+              </Button>
+            </div>
+          ) : undefined
         }
       />
 
@@ -528,6 +530,7 @@ export default function FDRListPage() {
           <>
             <DataTable
               keyField="id"
+              tableClassName="min-w-[1200px]"
               onRowClick={(row) => navigate(`/fdr/${row.id}`)}
               sortColumn={sortField}
               sortDirection={sortOrder}
@@ -537,13 +540,14 @@ export default function FDRListPage() {
                   key: "fdrNumber",
                   header: "FDR Reference",
                   sortable: true,
+                  className: "min-w-[200px]",
                   cell: (row: CentralFDRRecord) => (
                     <div className="py-0.5">
                       <div className="font-mono text-xs font-bold text-slate-900 flex items-center gap-1.5 hover:text-orange-600 transition-colors">
                         <span className="h-1.5 w-1.5 rounded-full bg-orange-500 flex-shrink-0" />
                         {row.fdrNumber}
                       </div>
-                      <span className="text-[11px] text-slate-400 block truncate max-w-[180px]">
+                      <span className="text-[11px] text-slate-500 block">
                         {row.instrumentCategory || row.purpose}
                       </span>
                     </div>
@@ -553,9 +557,10 @@ export default function FDRListPage() {
                   key: "institutionName",
                   header: "Institution",
                   sortable: true,
+                  className: "min-w-[230px]",
                   cell: (row: CentralFDRRecord) => (
                     <div className="py-0.5">
-                      <p className="text-xs font-semibold text-slate-800 line-clamp-1">{row.institutionName}</p>
+                      <p className="text-xs font-semibold text-slate-800">{row.institutionName}</p>
                       <span className="inline-block mt-0.5 font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">
                         {row.institutionCode || "AICTE"}
                       </span>
@@ -565,10 +570,11 @@ export default function FDRListPage() {
                 {
                   key: "bankName",
                   header: "Bank & Branch",
+                  className: "min-w-[220px]",
                   cell: (row: CentralFDRRecord) => (
                     <div className="py-0.5">
                       <p className="text-xs font-semibold text-slate-800">{row.bankName}</p>
-                      <p className="text-[11px] text-slate-400 font-mono truncate max-w-[170px]">
+                      <p className="text-[11px] text-slate-500 font-mono">
                         {row.bankBranch} · {row.ifscCode}
                       </p>
                     </div>
@@ -579,6 +585,7 @@ export default function FDRListPage() {
                   header: "Principal Amount",
                   sortable: true,
                   align: "right",
+                  className: "whitespace-nowrap min-w-[130px]",
                   cell: (row: CentralFDRRecord) => (
                     <div className="py-0.5 text-right">
                       <p className="font-mono text-xs font-bold text-slate-900">{formatCurrency(row.principalAmount)}</p>
@@ -592,6 +599,7 @@ export default function FDRListPage() {
                   key: "issueDate",
                   header: "Issue Date",
                   sortable: true,
+                  className: "whitespace-nowrap min-w-[110px]",
                   cell: (row: CentralFDRRecord) => (
                     <span className="text-xs font-mono text-slate-600">
                       {row.issueDate ? formatDate(row.issueDate) : formatDate(row.depositDate)}
@@ -602,6 +610,7 @@ export default function FDRListPage() {
                   key: "maturityDate",
                   header: "Maturity Date",
                   sortable: true,
+                  className: "whitespace-nowrap min-w-[130px]",
                   cell: (row: CentralFDRRecord) => {
                     const matDate = new Date(row.maturityDate);
                     const now = new Date();
@@ -631,6 +640,7 @@ export default function FDRListPage() {
                 {
                   key: "submissionStatus",
                   header: "Submission",
+                  className: "whitespace-nowrap min-w-[110px]",
                   cell: (row: CentralFDRRecord) => (
                     <SubmissionStatusBadge status={row.submissionStatus} />
                   ),
@@ -638,6 +648,7 @@ export default function FDRListPage() {
                 {
                   key: "verificationStatus",
                   header: "Verification",
+                  className: "whitespace-nowrap min-w-[140px]",
                   cell: (row: CentralFDRRecord) => (
                     <VerificationStatusBadge status={row.verificationStatus} />
                   ),
@@ -645,6 +656,7 @@ export default function FDRListPage() {
                 {
                   key: "lifecycleStatus",
                   header: "Lifecycle",
+                  className: "whitespace-nowrap min-w-[140px]",
                   cell: (row: CentralFDRRecord) => (
                     <LifecycleStatusBadge status={row.lifecycleStatus} />
                   ),
@@ -653,6 +665,7 @@ export default function FDRListPage() {
                   key: "actions",
                   header: "Action",
                   align: "right",
+                  className: "whitespace-nowrap min-w-[90px]",
                   cell: (row: CentralFDRRecord) => (
                     <div
                       className="flex items-center justify-end gap-1.5"

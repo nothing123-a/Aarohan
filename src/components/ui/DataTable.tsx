@@ -30,6 +30,7 @@ export interface TableProps<T> {
   onSort?: (column: string) => void;
   onRowClick?: (row: T) => void;
   className?: string;
+  tableClassName?: string;
   stickyHeader?: boolean;
 }
 
@@ -46,11 +47,12 @@ export function DataTable<T extends object>({
   onSort,
   onRowClick,
   className,
+  tableClassName,
   stickyHeader,
 }: TableProps<T>) {
   return (
     <div className={cn("w-full overflow-auto rounded-lg border border-slate-200", className)}>
-      <table className="w-full text-sm border-collapse">
+      <table className={cn("w-full text-sm border-collapse", tableClassName)}>
         {/* Head */}
         <thead className={cn("bg-slate-50", stickyHeader && "sticky top-0 z-10")}>
           <tr>

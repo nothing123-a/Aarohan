@@ -45,10 +45,189 @@ interface TopbarProps {
 }
 
 export function Topbar({ pageTitle }: TopbarProps) {
-  const { user, logout, switchRole } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [unreadCount, setUnreadCount] = useState(3);
+
+  // Role-specific notifications data for Topbar dropdown
+  const getRoleNotifications = () => {
+    const role = user?.role;
+    if (role === "institution_representative" || role === "depositor") {
+      let dispatchedItems: any[] = [];
+      try {
+        const stored = JSON.parse(localStorage.getItem("fdr_smart_dispatched_notices") || "[]");
+        dispatchedItems = stored.map((sn: any) => ({
+          id: sn.id,
+          title: sn.title,
+          subtitle: sn.body ? sn.body.slice(0, 58) + "…" : "Statutory renewal action required",
+          time: "Just now",
+          icon: <AlertTriangle size={12} />,
+          iconBg: "bg-red-100 text-red-600",
+          link: "/renewals",
+        }));
+      } catch {}
+
+      return [
+        ...dispatchedItems,
+        {
+          id: "ir-1",
+          title: "FDR Certificate Uploaded",
+          subtitle: "FDR_AICTE_2026_FD143 submitted for OCR scrutiny",
+          time: "15 mins ago",
+          icon: <CheckCircle2 size={12} />,
+          iconBg: "bg-blue-100 text-blue-600",
+          link: "/fdr",
+        },
+        {
+          id: "ir-2",
+          title: "Lien Clarification Required",
+          subtitle: "Scrutiny Officer requested Bank of Baroda lien response",
+          time: "2 hrs ago",
+          icon: <AlertTriangle size={12} />,
+          iconBg: "bg-amber-100 text-amber-600",
+          link: "/dashboard",
+        },
+        {
+          id: "ir-3",
+          title: "Deposit Maturing in 28 Days",
+          subtitle: "FDR-2024-9841 (₹50,00,000) renewal required",
+          time: "5 hrs ago",
+          icon: <Clock size={12} />,
+          iconBg: "bg-red-100 text-red-600",
+          link: "/renewals",
+        },
+        {
+          id: "ir-4",
+          title: "Refund Request Sanctioned",
+          subtitle: "Refund REF-2026-081 approved by AICTE Authority",
+          time: "1 day ago",
+          icon: <CheckCircle2 size={12} />,
+          iconBg: "bg-green-100 text-green-600",
+          link: "/release-requests",
+        },
+      ];
+    } else if (role === "scrutiny_officer" || role === "officer" || role === "verifier") {
+      return [
+        {
+          id: "so-1",
+          title: "New FDR Pending Scrutiny",
+          subtitle: "Delhi Technological University ₹50 Lakh FDR awaiting OCR",
+          time: "10 mins ago",
+          icon: <Clock size={12} />,
+          iconBg: "bg-blue-100 text-blue-600",
+          link: "/verification",
+        },
+        {
+          id: "so-2",
+          title: "OCR Amount Mismatch Flagged",
+          subtitle: "FDR-2026-98124: Claimed ₹35 Lakh vs OCR ₹30 Lakh",
+          time: "45 mins ago",
+          icon: <AlertTriangle size={12} />,
+          iconBg: "bg-orange-100 text-orange-600",
+          link: "/verification",
+        },
+        {
+          id: "so-3",
+          title: "Institution Clarification Arrived",
+          subtitle: "DTU submitted joint lien clarification response",
+          time: "3 hrs ago",
+          icon: <CheckCircle2 size={12} />,
+          iconBg: "bg-purple-100 text-purple-600",
+          link: "/verification",
+        },
+        {
+          id: "so-4",
+          title: "SBI CBS Lien Verified",
+          subtitle: "SBI Parliament St. confirmed irrevocable lien notation",
+          time: "6 hrs ago",
+          icon: <CheckCircle2 size={12} />,
+          iconBg: "bg-green-100 text-green-600",
+          link: "/fdr",
+        },
+      ];
+    } else if (role === "approving_authority") {
+      return [
+        {
+          id: "aa-1",
+          title: "Release Request Pending Sanction",
+          subtitle: "DTU ₹50,00,000 refund claim awaiting executive sign-off",
+          time: "25 mins ago",
+          icon: <Clock size={12} />,
+          iconBg: "bg-purple-100 text-purple-600",
+          link: "/release-requests",
+        },
+        {
+          id: "aa-2",
+          title: "3 Scrutiny Dossiers Recommended",
+          subtitle: "Technical scrutiny cleared; ready for executive sanction",
+          time: "1 hr ago",
+          icon: <CheckCircle2 size={12} />,
+          iconBg: "bg-green-100 text-green-600",
+          link: "/dashboard",
+        },
+        {
+          id: "aa-3",
+          title: "Weekly Statement Overdue",
+          subtitle: "2 institutions missed weekly bank statement filing",
+          time: "4 hrs ago",
+          icon: <AlertTriangle size={12} />,
+          iconBg: "bg-amber-100 text-amber-600",
+          link: "/statements",
+        },
+        {
+          id: "aa-4",
+          title: "Monthly Compliance Ledger Ready",
+          subtitle: "AICTE Regulation Bureau deposit audit package compiled",
+          time: "1 day ago",
+          icon: <CheckCircle2 size={12} />,
+          iconBg: "bg-blue-100 text-blue-600",
+          link: "/reports",
+        },
+      ];
+    } else {
+      return [
+        {
+          id: "adm-1",
+          title: "Security & ClamAV Scan Clean",
+          subtitle: "Zero malicious signatures across uploaded vault documents",
+          time: "30 mins ago",
+          icon: <CheckCircle2 size={12} />,
+          iconBg: "bg-green-100 text-green-600",
+          link: "/audit-logs",
+        },
+        {
+          id: "adm-2",
+          title: "New Institution Account Verified",
+          subtitle: "Netaji Subhas University representative account enabled",
+          time: "2 hrs ago",
+          icon: <Clock size={12} />,
+          iconBg: "bg-blue-100 text-blue-600",
+          link: "/admin/users",
+        },
+        {
+          id: "adm-3",
+          title: "OCR Engine Throughput: 98.4%",
+          subtitle: "PyMuPDF + RapidOCR extracted 18 certificates today",
+          time: "8 hrs ago",
+          icon: <CheckCircle2 size={12} />,
+          iconBg: "bg-purple-100 text-purple-600",
+          link: "/settings",
+        },
+        {
+          id: "adm-4",
+          title: "Supabase & Database Failover OK",
+          subtitle: "PostgreSQL checkpoints verified and fully synchronized",
+          time: "1 day ago",
+          icon: <CheckCircle2 size={12} />,
+          iconBg: "bg-slate-100 text-slate-600",
+          link: "/audit-logs",
+        },
+      ];
+    }
+  };
+
+  const notifications = getRoleNotifications();
+  const [unreadCount, setUnreadCount] = useState(notifications.length - 1);
 
   // Generate breadcrumb trail
   const pathSegments = location.pathname.split("/").filter(Boolean);
@@ -90,75 +269,12 @@ export function Topbar({ pageTitle }: TopbarProps) {
           </nav>
         )}
         <h1 className="text-sm sm:text-base font-bold text-slate-900 leading-tight truncate font-plus-jakarta mt-0.5">
-          {pageTitle || "Garuda Netra FDR Portal"}
+          {pageTitle || "Aarohan FDR Portal"}
         </h1>
       </div>
 
       {/* Right Controls */}
       <div className="flex items-center gap-2.5 flex-shrink-0">
-        {/*
-          ── EVALUATION DEMO SWITCHER ─────────────────────────────────────────
-          Calls /api/auth/switch-role to obtain a real signed JWT for each persona.
-          Backend authorization enforces the actual role on every API call.
-          This control does NOT bypass backend permissions.
-        */}
-        <div
-          className="hidden xl:flex items-center gap-1 bg-amber-50 p-1 rounded-lg border border-amber-200 text-xs"
-          title="SIH Demo: Switches active JWT persona. Backend enforces real role on every API call."
-        >
-          <span className="text-[10px] text-amber-700 font-bold uppercase px-1.5 whitespace-nowrap">
-            🎓 Demo:
-          </span>
-          <button
-            onClick={() => switchRole("institution_representative")}
-            className={cn(
-              "px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all cursor-pointer",
-              user?.role === "institution_representative" || user?.role === "depositor"
-                ? "bg-orange-500 text-white shadow-2xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
-            )}
-            title="Institution Representative (DTU) — limited to own institution records"
-          >
-            Inst Rep
-          </button>
-          <button
-            onClick={() => switchRole("scrutiny_officer")}
-            className={cn(
-              "px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all cursor-pointer",
-              user?.role === "scrutiny_officer" || user?.role === "officer" || user?.role === "verifier"
-                ? "bg-blue-600 text-white shadow-2xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
-            )}
-            title="AICTE Scrutiny Officer — can recommend but not approve releases"
-          >
-            Scrutiny
-          </button>
-          <button
-            onClick={() => switchRole("approving_authority")}
-            className={cn(
-              "px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all cursor-pointer",
-              user?.role === "approving_authority"
-                ? "bg-purple-700 text-white shadow-2xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
-            )}
-            title="Executive Approving Authority — sole role that can sanction final releases"
-          >
-            Approver
-          </button>
-          <button
-            onClick={() => switchRole("admin")}
-            className={cn(
-              "px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all cursor-pointer",
-              user?.role === "admin"
-                ? "bg-slate-800 text-white shadow-2xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
-            )}
-            title="System Administrator — no financial approval authority"
-          >
-            Admin
-          </button>
-        </div>
-
         {/* Quick Search */}
         <button
           onClick={() => navigate("/fdr")}
@@ -190,8 +306,16 @@ export function Topbar({ pageTitle }: TopbarProps) {
           <DropdownMenuContent align="end" className="w-80 p-0 overflow-hidden shadow-lg border-slate-200">
             <div className="p-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <p className="text-xs font-bold text-slate-800">Critical Notifications</p>
-                <p className="text-[10px] text-slate-400">{unreadCount} actionable maturity alerts</p>
+                <p className="text-xs font-bold text-slate-800">
+                  {user?.role === "institution_representative" || user?.role === "depositor"
+                    ? "Institution Alerts"
+                    : user?.role === "scrutiny_officer" || user?.role === "officer" || user?.role === "verifier"
+                    ? "Scrutiny Queue Alerts"
+                    : user?.role === "approving_authority"
+                    ? "Executive Sanction Alerts"
+                    : "System Notifications"}
+                </p>
+                <p className="text-[10px] text-slate-400">{unreadCount} unread notifications</p>
               </div>
               <button
                 onClick={() => setUnreadCount(0)}
@@ -201,53 +325,29 @@ export function Topbar({ pageTitle }: TopbarProps) {
               </button>
             </div>
             <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
-              <div
-                onClick={() => navigate("/alerts")}
-                className="p-3 hover:bg-orange-50/50 transition-colors cursor-pointer flex gap-2.5 items-start"
-              >
-                <div className="h-6 w-6 rounded-full bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <AlertTriangle size={12} />
+              {notifications.map((n) => (
+                <div
+                  key={n.id}
+                  onClick={() => navigate(n.link)}
+                  className="p-3 hover:bg-orange-50/50 transition-colors cursor-pointer flex gap-2.5 items-start"
+                >
+                  <div
+                    className={cn(
+                      "h-6 w-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5",
+                      n.iconBg
+                    )}
+                  >
+                    {n.icon}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-slate-900 leading-snug">
+                      {n.title}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{n.subtitle}</p>
+                    <span className="text-[10px] text-slate-400 font-mono">{n.time}</span>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-slate-900 leading-snug">
-                    FDR-2026-002 Maturing in 3 Days
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">Tata Projects Global · ₹ 1.20 Cr</p>
-                  <span className="text-[10px] text-slate-400 font-mono">10 mins ago</span>
-                </div>
-              </div>
-
-              <div
-                onClick={() => navigate("/verification")}
-                className="p-3 hover:bg-orange-50/50 transition-colors cursor-pointer flex gap-2.5 items-start"
-              >
-                <div className="h-6 w-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <CheckCircle2 size={12} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-slate-900 leading-snug">
-                    SBI Parliament St. Confirmed Lien
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">FDR-2026-98124 verified by Branch Manager</p>
-                  <span className="text-[10px] text-slate-400 font-mono">45 mins ago</span>
-                </div>
-              </div>
-
-              <div
-                onClick={() => navigate("/renewals")}
-                className="p-3 hover:bg-orange-50/50 transition-colors cursor-pointer flex gap-2.5 items-start"
-              >
-                <div className="h-6 w-6 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Clock size={12} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-slate-900 leading-snug">
-                    New Renewal Request Submitted
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">GMR Enterprises · ₹ 92,00,000</p>
-                  <span className="text-[10px] text-slate-400 font-mono">2 hrs ago</span>
-                </div>
-              </div>
+              ))}
             </div>
             <div className="p-2 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-xs">
               <Link

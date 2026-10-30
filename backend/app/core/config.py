@@ -13,9 +13,10 @@ load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR.parent / ".env")
 
 STORAGE_DIR = BASE_DIR / "storage" / "documents"
+STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 class Settings(BaseModel):
-    PROJECT_NAME: str = "FDR-SMART Backend"
+    PROJECT_NAME: str = "Aarohan Backend"
     API_V1_PREFIX: str = "/api/v1"
     
     # Document storage & security constraints per PRD & DATABASE.md

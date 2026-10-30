@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { NavLink, useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   FileText,
   FilePlus2,
   FileCheck2,
+  CheckCircle2,
   BellRing,
   RefreshCw,
   FileCheck,
@@ -14,12 +15,12 @@ import {
   Settings,
   LogOut,
   ChevronLeft,
-  Palette,
   Users,
   Clock,
   Coins,
   FileSpreadsheet,
   Layers,
+  Wallet,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,34 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const isItemActive = (itemPath: string) => {
+    // 1. Exact match with search params (e.g. /dashboard?tab=supervision)
+    if (itemPath === location.pathname + location.search) {
+      return true;
+    }
+
+    // 2. Dashboard or Treasury primary path match
+    if (
+      (itemPath === "/treasury" || itemPath === "/dashboard") &&
+      (location.pathname === "/treasury" || location.pathname === "/dashboard")
+    ) {
+      return true;
+    }
+
+    // 3. Release & Refund list match
+    if (itemPath === "/release-requests" && (location.pathname === "/release-requests" || location.pathname === "/refund-requests")) {
+      return true;
+    }
+
+    // 4. For other non-query links (like /verification, /fdr, /monitoring, /audit-logs):
+    if (!itemPath.includes("?")) {
+      return location.pathname === itemPath || (itemPath !== "/" && location.pathname.startsWith(itemPath + "/"));
+    }
+
+    return false;
+  };
 
   const getNavItemsForRole = (role?: UserRole): NavItem[] => {
     switch (role) {
@@ -47,7 +76,7 @@ export function Sidebar() {
           { label: "Submit New FDR",              path: "/fdr/new",          icon: <FilePlus2 size={17} /> },
           { label: "Renewals & Extensions",       path: "/renewals",         icon: <RefreshCw size={17} /> },
           { label: "Release & Refund Claims",     path: "/release-requests", icon: <FileCheck size={17} /> },
-          { label: "Request for Refund",          path: "/refund-requests",  icon: <Coins size={17} /> },
+          { label: "Request for Refund",          path: "/refund-requests/new", icon: <Coins size={17} /> },
           { label: "Observations & Alerts",       path: "/notifications",    icon: <BellRing size={17} /> },
         ];
       case "scrutiny_officer":
@@ -55,7 +84,7 @@ export function Sidebar() {
       case "verifier":
         return [
           { label: "Scrutiny Dashboard",          path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
-          { label: "OCR Verification Queue",      path: "/verification",     icon: <FileCheck2 size={17} /> },
+          { label: "OCR Document Verification",   path: "/verification",     icon: <FileCheck2 size={17} /> },
           { label: "Weekly Statements",           path: "/statements",       icon: <FileSpreadsheet size={17} /> },
           { label: "Account Aggregator",          path: "/account-aggregator", icon: <Layers size={17} /> },
           { label: "Master Deposit Register",     path: "/fdr",              icon: <FileText size={17} /> },
@@ -64,27 +93,19 @@ export function Sidebar() {
           { label: "Operational Alerts",          path: "/notifications",    icon: <BellRing size={17} /> },
         ];
       case "approving_authority":
-        return [
-          { label: "Executive Dashboard",         path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
-          { label: "Weekly Bank Statements",      path: "/statements",       icon: <FileSpreadsheet size={17} /> },
-          { label: "Account Aggregator (AA)",     path: "/account-aggregator", icon: <Layers size={17} /> },
-          { label: "Approval Queue",              path: "/release-requests?status=pending", icon: <Clock size={17} /> },
-          { label: "Release & Refund Sanctions",  path: "/release-requests", icon: <FileCheck size={17} /> },
-          { label: "Refund Requests",             path: "/refund-requests",  icon: <Coins size={17} /> },
-          { label: "Master Deposit Register",     path: "/fdr",              icon: <FileText size={17} /> },
-          { label: "Maturity Horizon Calendar",   path: "/monitoring",       icon: <Clock size={17} /> },
-          { label: "Executive Reports",           path: "/reports",          icon: <TrendingUp size={17} /> },
-          { label: "Audit Ledger",                path: "/audit-logs",       icon: <Terminal size={17} /> },
-        ];
       case "admin":
       default:
         return [
-          { label: "System Dashboard",            path: "/dashboard",        icon: <LayoutDashboard size={17} /> },
-          { label: "User Administration",         path: "/admin/users",      icon: <Users size={17} /> },
-          { label: "Institution Directory",       path: "/institutions",     icon: <Building2 size={17} /> },
-          { label: "System Audit Ledger",         path: "/audit-logs",       icon: <Terminal size={17} /> },
-          { label: "Regulatory Policy Settings",  path: "/settings",         icon: <Settings size={17} /> },
-          { label: "Design System Showcase",      path: "/design-system",    icon: <Palette size={17} /> },
+          { label: "Treasury & Funds Liquidity",  path: "/treasury",                  icon: <Coins size={17} /> },
+          { label: "Supervise Scrutiny Officers", path: "/officers",                  icon: <Users size={17} /> },
+          { label: "Final FDR Approvals",         path: "/approvals",                 icon: <CheckCircle2 size={17} /> },
+          { label: "Refund & Release Sanctions",  path: "/refund-sanctions",          icon: <Wallet size={17} /> },
+          { label: "OCR Documents Managing",      path: "/verification",              icon: <FileCheck2 size={17} /> },
+          { label: "Institution Directory",       path: "/institutions",              icon: <Building2 size={17} /> },
+          { label: "User Administration",         path: "/admin/users",               icon: <Users size={17} /> },
+          { label: "Regulatory Policy Settings",  path: "/settings",                  icon: <Settings size={17} /> },
+          { label: "Master Deposit Register",     path: "/fdr",                       icon: <FileText size={17} /> },
+          { label: "Audit Ledger",                path: "/audit-logs",                icon: <Terminal size={17} /> },
         ];
     }
   };
@@ -101,10 +122,9 @@ export function Sidebar() {
       case "verifier":
         return { title: "Scrutiny Portal", subtitle: "Regulation Bureau Scrutiny" };
       case "approving_authority":
-        return { title: "Approving Authority", subtitle: "Financial Decision Cell" };
       case "admin":
       default:
-        return { title: "Admin Portal", subtitle: "AICTE IT & Governance" };
+        return { title: "Approving Authority", subtitle: "Financial Decision Cell" };
     }
   };
 
@@ -136,7 +156,7 @@ export function Sidebar() {
           {!collapsed && (
             <div className="overflow-hidden">
               <p className="text-sm font-bold text-slate-900 leading-tight font-plus-jakarta tracking-tight">
-                FDR-SMART
+                Aarohan
               </p>
               <p className="text-[10px] text-orange-600 font-bold uppercase tracking-wider truncate">
                 {portalInfo.title}
@@ -161,43 +181,39 @@ export function Sidebar() {
 
       {/* Navigation Links */}
       <nav className="flex-1 px-2.5 py-4 space-y-1 overflow-y-auto overflow-x-hidden">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            end={item.path === "/dashboard"}
-            title={collapsed ? item.label : undefined}
-            className={({ isActive }) =>
-              cn(
+        {navItems.map((item) => {
+          const isActive = isItemActive(item.path);
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              title={collapsed ? item.label : undefined}
+              className={cn(
                 "group flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-semibold transition-all duration-150",
                 isActive
                   ? "bg-orange-50 text-orange-700 shadow-2xs font-bold"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
                 collapsed && "justify-center px-0"
-              )
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <span
-                  className={cn(
-                    "flex-shrink-0 transition-colors",
-                    isActive ? "text-orange-600" : "text-slate-400 group-hover:text-slate-600"
-                  )}
-                >
-                  {item.icon}
-                </span>
-                {!collapsed && (
-                  <span className="truncate flex-1 text-left">{item.label}</span>
+              )}
+            >
+              <span
+                className={cn(
+                  "flex-shrink-0 transition-colors",
+                  isActive ? "text-orange-600" : "text-slate-400 group-hover:text-slate-600"
                 )}
-                {/* Active indicator bar */}
-                {isActive && !collapsed && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-orange-500 flex-shrink-0 ml-auto" />
-                )}
-              </>
-            )}
-          </NavLink>
-        ))}
+              >
+                {item.icon}
+              </span>
+              {!collapsed && (
+                <span className="truncate flex-1 text-left">{item.label}</span>
+              )}
+              {/* Active indicator bar */}
+              {isActive && !collapsed && (
+                <span className="h-1.5 w-1.5 rounded-full bg-orange-500 flex-shrink-0 ml-auto" />
+              )}
+            </Link>
+          );
+        })}
       </nav>
 
       {/* User Profile Footer */}

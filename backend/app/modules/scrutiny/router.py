@@ -30,6 +30,8 @@ from app.core.models import (
     AuditEvent,
 )
 from app.core.security import get_current_user_optional
+from app.modules.documents.storage import list_documents_for_instrument
+from app.modules.document_processing.ocr_service import get_latest_extraction_run
 
 router = APIRouter(prefix="/scrutiny", tags=["Scrutiny & Observations"])
 
@@ -121,6 +123,31 @@ async def get_scrutiny_queue(db: Session = Depends(get_db)):
         else:
             next_action = "Assign Scrutiny Officer for Document Extraction Review"
 
+        docs = list_documents_for_instrument(inst.id, db=db)
+        doc_meta = None
+        ocr_run_meta = None
+        if docs:
+            d0 = docs[0]
+            doc_meta = {
+                "id": d0.id,
+                "original_filename": d0.original_filename,
+                "mime_type": d0.mime_type,
+                "file_size_bytes": d0.file_size_bytes,
+                "download_url": f"/api/v1/documents/{d0.id}/download",
+                "uploaded_at": d0.uploaded_at,
+                "scan_status": d0.scan_status,
+                "sha256": d0.sha256_checksum,
+            }
+            run = get_latest_extraction_run(d0.id, db=db)
+            if run:
+                ocr_run_meta = {
+                    "id": run.id,
+                    "ocr_confidence": run.ocr_confidence,
+                    "processor_name": run.processor_name,
+                    "status": run.status,
+                    "extracted_fields": run.extracted_fields,
+                }
+
         queue.append({
             "id": inst.id,
             "fdr_number": inst.reference_number,
@@ -136,11 +163,20 @@ async def get_scrutiny_queue(db: Session = Depends(get_db)):
             "assigned_reviewer": "Anil Verma (Senior Scrutiny Officer)",
             "open_discrepancies_count": open_disc_count,
             "required_next_action": next_action,
+            "has_document": bool(docs),
+            "documents_count": len(docs),
+            "document": doc_meta,
+            "document_url": doc_meta["download_url"] if doc_meta else None,
+            "document_filename": doc_meta["original_filename"] if doc_meta else None,
+            "latest_extraction_run": ocr_run_meta,
+            "ocr_confidence": ocr_run_meta["ocr_confidence"] if ocr_run_meta else None,
         })
 
     return {
+        "total": len(queue),
         "total_cases": len(queue),
         "queue": queue,
+        "cases": queue,
     }
 
 @router.post("/cases/{fdr_id}/start-review")

@@ -11,7 +11,7 @@ export interface DialogProps {
   onClose: () => void;
   title: string;
   description?: string;
-  size?: "sm" | "default" | "md" | "lg" | "xl";
+  size?: "sm" | "default" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "full";
   children: React.ReactNode;
   footer?: React.ReactNode;
   /** Prevent closing on backdrop click */
@@ -23,7 +23,11 @@ const SIZE_MAP = {
   default: "max-w-md",
   md: "max-w-md",
   lg: "max-w-lg",
-  xl: "max-w-2xl",
+  xl: "max-w-4xl",
+  "2xl": "max-w-5xl",
+  "3xl": "max-w-6xl",
+  "4xl": "max-w-7xl",
+  full: "max-w-[95vw]",
 };
 
 export function Dialog({

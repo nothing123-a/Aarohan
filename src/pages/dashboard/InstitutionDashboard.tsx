@@ -19,6 +19,10 @@ import {
   X,
   BarChart2,
   Send,
+  Upload,
+  FileUp,
+  Sparkles,
+  Printer,
 } from "lucide-react";
 import { StatCard, Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { FDRStatusBadge } from "@/components/shared/FDRStatusBadge";
@@ -28,9 +32,10 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Textarea, Input, Select } from "@/components/ui/FormFields";
 import { formatCurrency, formatDate, daysUntil } from "@/utils";
 import { getInstitutionStats, CENTRAL_OBSERVATIONS, CENTRAL_FDR_RECORDS, CENTRAL_APPROVAL_CASES } from "@/data/centralDataset";
-import { releaseService, institutionDashboardService } from "@/services/fdrService";
+import { releaseService, institutionDashboardService, fdrService } from "@/services/fdrService";
 import type { InstitutionFinancialStatus } from "@/services/fdrService";
 import type { User } from "@/types";
+import { BankDischargeNocModal, type NocVoucherData } from "@/components/shared/BankDischargeNocModal";
 
 interface InstitutionDashboardProps {
   user: User;
@@ -62,22 +67,24 @@ function StatusChip({
 }
 
 function refundStatusVariant(s: string): "green" | "amber" | "red" | "blue" | "slate" {
-  if (s === "completed" || s === "released") return "green";
-  if (s === "approved") return "blue";
+  if (s === "completed" || s === "released" || s === "approved") return "green";
   if (s === "rejected") return "red";
-  if (s === "returned_for_correction") return "amber";
+  if (s === "returned_for_correction" || s === "returned") return "amber";
+  if (s === "under_review" || s === "pending_approval" || s === "submitted") return "blue";
   return "slate";
 }
 
 function refundStatusLabel(s: string) {
   const map: Record<string, string> = {
-    submitted: "Submitted",
+    submitted: "Submitted · Scrutiny Pending",
     under_review: "Under Scrutiny",
-    approved: "Approved – Pending NOC",
-    completed: "Completed",
-    released: "Released",
+    pending_approval: "Awaiting Bureau Sanction",
+    approved: "Approved · Bank NOC Issued",
+    completed: "Discharged & Completed",
+    released: "Discharged & Released",
     rejected: "Rejected",
-    returned_for_correction: "Returned – Query Raised",
+    returned: "Returned for Clarification",
+    returned_for_correction: "Returned · Query Raised",
   };
   return map[s] ?? s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -109,6 +116,53 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
   useEffect(() => {
     fetchFinancialStatus();
   }, [institutionId]);
+
+  // ─── Upload Certificate State & Actions ──────────────────────────────────
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [selectedFdrForUpload, setSelectedFdrForUpload] = useState<any | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [uploadSuccessMsg, setUploadSuccessMsg] = useState<string | null>(null);
+  const [uploadErrorMsg, setUploadErrorMsg] = useState<string | null>(null);
+
+  const handleOpenUploadModal = (fdr: any) => {
+    setSelectedFdrForUpload(fdr);
+    setSelectedFile(null);
+    setUploadSuccessMsg(null);
+    setUploadErrorMsg(null);
+    setUploadModalOpen(true);
+  };
+
+  const handleUploadCertificate = async () => {
+    if (!selectedFdrForUpload || !selectedFile) {
+      setUploadErrorMsg("Please choose a PDF or scanned certificate image to upload.");
+      return;
+    }
+
+    setIsUploadingDoc(true);
+    setUploadErrorMsg(null);
+    setUploadSuccessMsg(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append("document_type", "fdr_certificate");
+
+      await fdrService.uploadDocument(selectedFdrForUpload.id, formData);
+
+      setUploadSuccessMsg(
+        `Certificate "${selectedFile.name}" successfully uploaded and processed! Cryptographic SHA-256 registered, and AI OCR extraction executed. This document and its parsed fields are now visible in the Scrutiny Officer Dashboard.`
+      );
+      setSelectedFile(null);
+      // Refresh portfolio status
+      await fetchFinancialStatus();
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || err.message || "Failed to upload document.";
+      setUploadErrorMsg(detail);
+    } finally {
+      setIsUploadingDoc(false);
+    }
+  };
 
   // ─── Existing local data (kept unchanged) ────────────────────────────────
   const stats = getInstitutionStats(institutionId);
@@ -184,6 +238,7 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
   const [queryResponseNotes, setQueryResponseNotes] = useState("");
   const [queryResponseLoading, setQueryResponseLoading] = useState(false);
   const [queryResponseSuccess, setQueryResponseSuccess] = useState(false);
+  const [selectedNocData, setSelectedNocData] = useState<NocVoucherData | null>(null);
 
   const handleRefundSubmit = async () => {
     setRefundValidationError(null);
@@ -285,8 +340,27 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
     }, 1400);
   };
 
-  // ─── Notifications from backend (Part 5) ─────────────────────────────────
+  // ─── Notifications from backend & Dispatched Notices (Part 5) ─────────────
   const backendNotifications = financialStatus?.notifications ?? [];
+  // Merge locally dispatched notices targeted to this institution
+  const localDispatchedNotices = useMemo(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("fdr_smart_dispatched_notices") || "[]");
+      return stored
+        .filter((sn: any) => !sn.institutionId || sn.institutionId === institutionId || institutionId === "inst-001")
+        .map((sn: any) => ({
+          type: "STATUTORY_NOTICE",
+          severity: "CRITICAL",
+          title: sn.title,
+          body: sn.body,
+          action_required: true,
+          fdr_id: sn.fdrNumber,
+        }));
+    } catch {
+      return [];
+    }
+  }, [institutionId]);
+
   // Filter out any statement missing/query banners — weekly statement auditing and tallying
   // belong exclusively on the Approver Dashboard. These types must never surface on the
   // institution representative portal regardless of backend state.
@@ -296,7 +370,7 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
     "STATEMENT_QUERY",
     "STATEMENT_MISSING",
   ]);
-  const criticalNotifications = backendNotifications.filter(
+  const criticalNotifications = [...localDispatchedNotices, ...backendNotifications].filter(
     (n) =>
       (n.severity === "CRITICAL" || n.action_required) &&
       !INSTITUTION_SUPPRESSED_TYPES.has(n.type)
@@ -309,19 +383,50 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
       (c) => c.institutionId === institutionId || !c.institutionId || institutionId === "inst-001"
     );
     for (const c of centralCases) {
-      if (!list.some((r: any) => r.id === c.id || r.fdr_number === c.fdrNumber)) {
-        list.push({
-          id: c.id,
-          instrument_id: c.fdrId,
-          fdr_number: c.fdrNumber,
-          bank_name: c.bankName,
-          amount: c.principalAmount,
-          request_type: c.requestType,
-          status: c.status.toLowerCase(),
-          submitted_at: c.requestedDate || new Date().toISOString(),
-          reason: c.scrutinyFinding || "Refund & release claim submitted.",
-          has_pending_query: c.status === "RETURNED",
-        });
+      const isApproved = c.status === "APPROVED" || c.status === "RELEASED" || c.status === "COMPLETED";
+      const isReturned = c.status === "RETURNED";
+      const isRejected = c.status === "REJECTED";
+      const nocRef =
+        c.nocVoucherRef ||
+        (isApproved ? `AICTE/NOC/2026/REL-${c.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase()}` : undefined);
+
+      const unifiedItem = {
+        id: c.id,
+        instrument_id: c.fdrId,
+        fdr_number: c.fdrNumber,
+        bank_name: c.bankName,
+        institution_name: c.institutionName,
+        amount: c.claimAmount || c.principalAmount,
+        principal_amount: c.principalAmount,
+        request_type: c.requestType,
+        status: isApproved
+          ? "approved"
+          : isRejected
+          ? "rejected"
+          : isReturned
+          ? "returned_for_correction"
+          : c.status.toLowerCase(),
+        submitted_at: c.requestedDate || new Date().toISOString(),
+        reason: c.scrutinyFinding || "Refund & release claim submitted.",
+        has_pending_query: isReturned,
+        latest_decision: isApproved ? "APPROVED" : isRejected ? "REJECTED" : isReturned ? "RETURNED_FOR_QUERY" : undefined,
+        latest_decision_notes: c.scrutinyFinding,
+        latest_decision_at: c.approvedDate || c.scrutinyDate,
+        noc_voucher_ref: nocRef,
+        regulatory_clause: c.regulatoryClause,
+        applicant_name: c.applicantName,
+      };
+
+      const existingIdx = list.findIndex((r: any) => r.id === c.id || r.fdr_number === c.fdrNumber);
+      if (existingIdx !== -1) {
+        list[existingIdx] = {
+          ...list[existingIdx],
+          ...unifiedItem,
+          noc_voucher_ref: unifiedItem.noc_voucher_ref || list[existingIdx].noc_voucher_ref,
+          status: unifiedItem.status || list[existingIdx].status,
+        };
+      } else {
+        list.push(unifiedItem);
       }
     }
     return list;
@@ -580,7 +685,17 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
                               </span>
                             )}
                           </td>
-                          <td className="py-3 px-4 text-right">
+                          <td className="py-3 px-4 text-right whitespace-nowrap space-x-1.5">
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              className="text-orange-700 border-orange-200 hover:bg-orange-50 text-[11px]"
+                              onClick={() => handleOpenUploadModal(fdr)}
+                              title="Upload Fixed Deposit Receipt certificate for automated AI extraction"
+                            >
+                              <Upload size={11} className="mr-1 text-orange-600" />
+                              <span>Upload Certificate</span>
+                            </Button>
                             <Button variant="ghost" size="xs" asChild>
                               <Link to={`/fdr/${fdr.id}`}>
                                 <span>Inspect</span>
@@ -613,10 +728,11 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
                 <Button size="sm" variant="outline" onClick={() => setActiveTab("refund_requests")}>
                   <span>View All Claims</span>
                 </Button>
-                <Button size="sm" variant="primary" className="bg-emerald-600 hover:bg-emerald-500 text-white"
-                  onClick={() => { setActiveTab("refund_requests"); setShowRefundForm(true); }}>
-                  <Coins size={14} />
-                  <span>Apply for Deposit Refund</span>
+                <Button size="sm" variant="primary" className="bg-emerald-600 hover:bg-emerald-500 text-white" asChild>
+                  <Link to="/refund-requests/new">
+                    <Coins size={14} />
+                    <span>Apply for Deposit Refund</span>
+                  </Link>
                 </Button>
               </div>
             </CardHeader>
@@ -635,14 +751,53 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
                 </div>
                 <div className="p-3.5 rounded-xl border border-blue-100 bg-blue-50/50 flex flex-col justify-between">
                   <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800">Approved Discharge NOCs</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800">Approved Discharge NOCs</span>
+                      {allRefundRequests.some((r) => r.status === "approved" || r.noc_voucher_ref || r.status === "released") && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-600 text-white animate-pulse">
+                          NOC Ready
+                        </span>
+                      )}
+                    </div>
                     <p className="text-base font-extrabold text-blue-950 font-mono mt-1">
-                      {financialStatus?.refund_requests.approved_pending_discharge ?? 1} Sanction Issued
+                      {allRefundRequests.filter((r) => r.status === "approved" || r.noc_voucher_ref || r.status === "released").length} Sanction{allRefundRequests.filter((r) => r.status === "approved" || r.noc_voucher_ref || r.status === "released").length !== 1 ? "s" : ""} Issued
                     </p>
                   </div>
-                  <p className="text-[11px] text-blue-700 mt-2">
-                    Official Bank Discharge NOC voucher ready for presentation to bank CBS host.
-                  </p>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-blue-700">
+                      Official Bank Discharge NOC voucher ready.
+                    </p>
+                    {allRefundRequests.some((r) => r.status === "approved" || r.noc_voucher_ref || r.status === "released") && (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        className="text-[10px] border-blue-300 text-blue-700 hover:bg-blue-100 font-semibold shrink-0"
+                        onClick={() => {
+                          setActiveTab("refund_requests");
+                          const approvedCase = allRefundRequests.find((r) => r.status === "approved" || r.noc_voucher_ref || r.status === "released");
+                          if (approvedCase) {
+                            setSelectedNocData({
+                              voucherRef:
+                                approvedCase.noc_voucher_ref ||
+                                `AICTE/NOC/2026/REL-${approvedCase.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase()}`,
+                              fdrNumber: approvedCase.fdr_number,
+                              fdrId: approvedCase.instrument_id,
+                              institutionName: approvedCase.institution_name || user.institutionName || "Delhi Technological University (DTU)",
+                              bankName: approvedCase.bank_name,
+                              principalAmount: approvedCase.principal_amount || approvedCase.amount,
+                              sanctionAmount: approvedCase.amount,
+                              requestType: approvedCase.request_type,
+                              sanctionDate: approvedCase.latest_decision_at || approvedCase.submitted_at,
+                              regulatoryClause: approvedCase.regulatory_clause,
+                              approvingAuthority: "Dr. Rajesh Sharma, Member Secretary, AICTE",
+                            });
+                          }
+                        }}
+                      >
+                        <Printer size={10} className="mr-1" /> View NOC
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 flex flex-col justify-between">
                   <div>
@@ -667,7 +822,7 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-800">Institution Financial Status</h3>
-              <p className="text-xs text-slate-500">Live data from AICTE FDR-SMART backend. Refresh to get latest status.</p>
+              <p className="text-xs text-slate-500">Live data from AICTE Aarohan backend. Refresh to get latest status.</p>
             </div>
             <Button size="sm" variant="outline" onClick={fetchFinancialStatus} disabled={statusLoading}>
               <RefreshCw size={13} className={statusLoading ? "animate-spin" : ""} />
@@ -1041,10 +1196,46 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
                               )}
                             </div>
                           )}
-                          {req.noc_voucher_ref && (
-                            <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-lg text-[11px]">
-                              <p className="font-semibold text-green-800">Bank Discharge NOC Issued</p>
-                              <p className="font-mono text-green-700 mt-0.5">{req.noc_voucher_ref}</p>
+                          {(req.noc_voucher_ref || req.status === "approved" || req.status === "released") && (
+                            <div className="mt-3 p-3 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl text-xs space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5 text-emerald-800 font-bold">
+                                  <ShieldCheck size={16} className="text-emerald-600" />
+                                  <span>Official Bank Discharge NOC Authorized</span>
+                                </div>
+                                <span className="text-[10px] bg-emerald-100 text-emerald-900 border border-emerald-300 font-mono font-bold px-2 py-0.5 rounded">
+                                  {req.noc_voucher_ref || `AICTE/NOC/2026/REL-${req.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase()}`}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-emerald-900">
+                                Administrative sanction granted by Approving Authority. Present this NOC to {req.bank_name} for Core Banking System lien revocation and fund credit.
+                              </p>
+                              <div className="pt-1 flex items-center justify-between">
+                                <span className="text-[10px] text-slate-500 font-medium">
+                                  Sanctioned Amount: <strong className="text-slate-800">{formatCurrency(req.amount)}</strong>
+                                </span>
+                                <Button
+                                  size="xs"
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs"
+                                  onClick={() => {
+                                    setSelectedNocData({
+                                      voucherRef: req.noc_voucher_ref || `AICTE/NOC/2026/REL-${req.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase()}`,
+                                      fdrNumber: req.fdr_number,
+                                      fdrId: req.instrument_id,
+                                      institutionName: req.institution_name || user.institutionName || "Delhi Technological University (DTU)",
+                                      bankName: req.bank_name,
+                                      principalAmount: req.principal_amount || req.amount,
+                                      sanctionAmount: req.amount,
+                                      requestType: req.request_type,
+                                      sanctionDate: req.latest_decision_at || req.submitted_at,
+                                      regulatoryClause: req.regulatory_clause,
+                                      approvingAuthority: "Dr. Rajesh Sharma, Member Secretary, AICTE",
+                                    });
+                                  }}
+                                >
+                                  <Printer size={12} className="mr-1" /> View Official NOC Voucher
+                                </Button>
+                              </div>
                             </div>
                           )}
                           {req.has_pending_query && (
@@ -1168,6 +1359,144 @@ export function InstitutionDashboard({ user }: InstitutionDashboardProps) {
           </div>
         </Dialog>
       )}
+      {/* ─── Upload Certificate Modal ────────────────────────────────────── */}
+      {uploadModalOpen && selectedFdrForUpload && (
+        <Dialog
+          open={uploadModalOpen}
+          onClose={() => setUploadModalOpen(false)}
+          size="md"
+          title={`Upload Certificate — ${selectedFdrForUpload.fdrNumber}`}
+          description="Upload the official Fixed Deposit Receipt issued by your scheduled bank. The file will be cryptographically hashed (SHA-256) and immediately parsed by the automated OCR extraction engine."
+          footer={
+            <div className="flex justify-end gap-2 w-full">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setUploadModalOpen(false)}
+                disabled={isUploadingDoc}
+              >
+                Close
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleUploadCertificate}
+                disabled={!selectedFile || isUploadingDoc}
+                className="bg-orange-600 hover:bg-orange-700 text-white font-semibold"
+              >
+                {isUploadingDoc ? (
+                  <>
+                    <RefreshCw size={13} className="animate-spin mr-1.5" />
+                    <span>Processing OCR...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileUp size={13} className="mr-1.5" />
+                    <span>Upload & Process Document</span>
+                  </>
+                )}
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-4 py-1 text-xs">
+            {/* Metadata Summary Card */}
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 grid grid-cols-2 gap-2 text-[11px]">
+              <div>
+                <span className="text-slate-400 block text-[10px]">Deposit Reference:</span>
+                <span className="font-mono font-bold text-slate-800">{selectedFdrForUpload.fdrNumber}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px]">Issuing Bank:</span>
+                <span className="font-medium text-slate-800">{selectedFdrForUpload.bankName}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px]">Principal Amount:</span>
+                <span className="font-mono font-bold text-emerald-700">
+                  {formatCurrency(selectedFdrForUpload.principalAmount)}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px]">Maturity Date:</span>
+                <span className="font-mono text-slate-700">{formatDate(selectedFdrForUpload.maturityDate)}</span>
+              </div>
+            </div>
+
+            {/* Notification / Error / Success Alerts */}
+            {uploadSuccessMsg && (
+              <Alert variant="success" className="text-xs">
+                <div className="space-y-1">
+                  <p className="font-bold">Upload & OCR Extraction Succeeded!</p>
+                  <p className="text-[11px] leading-relaxed">{uploadSuccessMsg}</p>
+                </div>
+              </Alert>
+            )}
+
+            {uploadErrorMsg && (
+              <Alert variant="error" className="text-xs">
+                <p className="font-bold">Upload Failed</p>
+                <p className="text-[11px] mt-0.5">{uploadErrorMsg}</p>
+              </Alert>
+            )}
+
+            {/* File Input Box */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-700 block">
+                Select Scanned Certificate / Deposit Document <span className="text-rose-500">*</span>
+              </label>
+              <div className="border-2 border-dashed border-slate-300 hover:border-orange-400 rounded-xl p-5 text-center transition-colors bg-white">
+                <FileText size={28} className="mx-auto text-orange-500 mb-2" />
+                <p className="text-xs font-medium text-slate-800 mb-1">
+                  {selectedFile ? selectedFile.name : "Choose PDF, JPG, or PNG document"}
+                </p>
+                {selectedFile && (
+                  <p className="text-[11px] text-slate-500 font-mono mb-2">
+                    ({Math.round(selectedFile.size / 1024)} KB)
+                  </p>
+                )}
+                <input
+                  type="file"
+                  id="fdr-doc-upload-input"
+                  accept=".pdf,image/png,image/jpeg,image/jpg"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) setSelectedFile(f);
+                  }}
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => document.getElementById("fdr-doc-upload-input")?.click()}
+                  className="border-slate-300 text-slate-700 hover:bg-slate-50"
+                >
+                  <Upload size={12} className="mr-1" />
+                  <span>{selectedFile ? "Replace File" : "Browse Computer"}</span>
+                </Button>
+                <p className="text-[10px] text-slate-400 mt-2">
+                  Supports PDF certificate copies and high-resolution scanned receipts (up to 15MB).
+                </p>
+              </div>
+            </div>
+
+            {/* AI Extraction Assurance Pill */}
+            <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-xl flex items-start gap-2 text-blue-900 text-[11px]">
+              <Sparkles size={14} className="text-blue-600 shrink-0 mt-0.5" />
+              <span>
+                Uploaded certificates automatically run through PyMuPDF & RapidOCR to parse deposit numbers, amounts, dates, and AICTE joint lien endorsement.
+              </span>
+            </div>
+          </div>
+        </Dialog>
+      )}
+
+      {/* ─── MODAL: OFFICIAL AICTE BANK DISCHARGE NOC VOUCHER ─── */}
+      <BankDischargeNocModal
+        open={!!selectedNocData}
+        onClose={() => setSelectedNocData(null)}
+        data={selectedNocData}
+      />
     </div>
   );
 }

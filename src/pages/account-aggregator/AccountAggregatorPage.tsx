@@ -350,39 +350,39 @@ export default function AccountAggregatorPage() {
           </div>
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full min-w-[1100px] text-left text-xs border-collapse">
             <thead className="bg-slate-50 text-slate-500 font-semibold uppercase text-[10px] tracking-wider border-b border-slate-200">
               <tr>
-                <th className="py-3 px-4">Pledging Institution</th>
-                <th className="py-3 px-4">Financial Information Provider (FIP)</th>
-                <th className="py-3 px-4">Account / Deposit Reference</th>
-                <th className="py-3 px-4 text-right">Verified Principal</th>
-                <th className="py-3 px-4 text-center">Consent Status</th>
-                <th className="py-3 px-4 text-center">AA Lien Status</th>
-                <th className="py-3 px-4">Last Telemetry Fetch</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4 min-w-[200px]">Pledging Institution</th>
+                <th className="py-3 px-4 min-w-[180px]">Financial Information Provider (FIP)</th>
+                <th className="py-3 px-4 whitespace-nowrap">Account / Deposit Reference</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap">Verified Principal</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">Consent Status</th>
+                <th className="py-3 px-4 text-center whitespace-nowrap">AA Lien Status</th>
+                <th className="py-3 px-4 whitespace-nowrap">Last Telemetry Fetch</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap pr-6">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {filteredConsents.map((c) => (
                 <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3 px-4 font-semibold text-slate-900">
+                  <td className="py-3 px-4 font-semibold text-slate-900 min-w-[200px]">
                     {c.institutionName}
-                    <span className="block text-[10px] font-mono text-slate-400 font-normal">
+                    <span className="block text-[10px] font-mono text-slate-500 font-normal">
                       Handle: {c.consentHandle}
                     </span>
                   </td>
-                  <td className="py-3 px-4">
+                  <td className="py-3 px-4 min-w-[180px]">
                     <span className="font-medium text-slate-800">{c.fipName}</span>
-                    <span className="block text-[10px] font-mono text-slate-400">{c.fipHandle}</span>
+                    <span className="block text-[10px] font-mono text-slate-500">{c.fipHandle}</span>
                   </td>
-                  <td className="py-3 px-4 font-mono font-medium text-slate-800">
+                  <td className="py-3 px-4 font-mono font-medium text-slate-800 whitespace-nowrap">
                     {c.accountRef}
                   </td>
-                  <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                  <td className="py-3 px-4 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                     {formatCurrency(c.principalAmount)}
                   </td>
-                  <td className="py-3 px-4 text-center">
+                  <td className="py-3 px-4 text-center whitespace-nowrap">
                     <span
                       className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
                         c.consentStatus === "ACTIVE"
@@ -395,7 +395,7 @@ export default function AccountAggregatorPage() {
                       {c.consentStatus}
                     </span>
                   </td>
-                  <td className="py-3 px-4 text-center">
+                  <td className="py-3 px-4 text-center whitespace-nowrap">
                     {c.verifiedLienStatus === "CONFIRMED_JOINT_LIEN" ? (
                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                         <CheckCircle2 size={11} /> Joint Lien Marked
@@ -409,13 +409,14 @@ export default function AccountAggregatorPage() {
                   <td className="py-3 px-4 text-slate-600 font-mono text-[11px] whitespace-nowrap">
                     {c.lastTelemetrySync}
                   </td>
-                  <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                  <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap pr-6 min-w-[240px]">
                     <Button
                       size="xs"
                       variant="outline"
                       title="Run real-time AA Telemetry poll to FIP host"
                       onClick={() => handleSimulateLiveQuery(c)}
                       disabled={liveQuerying}
+                      className="whitespace-nowrap"
                     >
                       <Zap size={11} className="mr-1 text-amber-500" />
                       Live Query
@@ -423,7 +424,7 @@ export default function AccountAggregatorPage() {
                     <Button
                       size="xs"
                       variant="primary"
-                      className="bg-teal-700 hover:bg-teal-800 text-white font-semibold"
+                      className="bg-teal-700 hover:bg-teal-800 text-white font-semibold whitespace-nowrap"
                       onClick={() => {
                         setSelectedConsent(c);
                         setArtifactModalOpen(true);

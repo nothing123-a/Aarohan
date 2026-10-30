@@ -24,6 +24,7 @@ from app.modules.monitoring.router import router as monitoring_router
 from app.modules.statement_analysis.router import router as statements_router
 from app.modules.account_aggregator.router import router as account_aggregator_router
 from app.api.v1.institution_dashboard import router as institution_dashboard_router
+from app.modules.notifications.router import router as notifications_router
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -77,6 +78,7 @@ app.add_middleware(
         "http://localhost:3001",
         "*",  # Permissive for local development and review
     ],
+    allow_origin_regex=r"^https://.*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -97,6 +99,7 @@ app.include_router(monitoring_router, prefix=settings.API_V1_PREFIX)
 app.include_router(statements_router, prefix=settings.API_V1_PREFIX)
 app.include_router(account_aggregator_router, prefix=settings.API_V1_PREFIX)
 app.include_router(institution_dashboard_router, prefix=settings.API_V1_PREFIX)
+app.include_router(notifications_router, prefix=settings.API_V1_PREFIX)
 
 # Also mount under /api prefix for standard frontend service calls
 app.include_router(auth_router, prefix="/api")
@@ -113,6 +116,18 @@ app.include_router(monitoring_router, prefix="/api")
 app.include_router(statements_router, prefix="/api")
 app.include_router(account_aggregator_router, prefix="/api")
 app.include_router(institution_dashboard_router, prefix="/api")
+app.include_router(notifications_router, prefix="/api")
+
+@app.get("/")
+async def root():
+    """Root entrypoint for Render health checks and deployment verification."""
+    return {
+        "status": "ONLINE",
+        "service": "Aarohan Central Bureau API",
+        "version": "1.0.0",
+        "docs_url": "/docs",
+        "health_check": "/health",
+    }
 
 @app.get("/api/v1/health")
 @app.get("/health")
@@ -120,7 +135,7 @@ async def health_check():
     """System health check and diagnostic status."""
     return {
         "status": "HEALTHY",
-        "service": "FDR-SMART Backend",
+        "service": "Aarohan Backend",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "database": str(engine.url).split("@")[-1] if "@" in str(engine.url) else str(engine.url),
         "capabilities": {

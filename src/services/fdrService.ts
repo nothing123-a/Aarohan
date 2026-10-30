@@ -251,6 +251,70 @@ export interface FinancialSummaryResponse {
   technical_scrutiny?: any;
 }
 
+export interface ExtractedFieldItem {
+  value: any;
+  confidence: number;
+  page?: number;
+  raw_snippet?: string;
+  field_category?: string;
+  status?: "found" | "not_found" | "unreadable" | "needs_review";
+}
+
+export interface DocumentExtractionRunItem {
+  id: string;
+  document_id: string;
+  status: string;
+  processor_name: string;
+  processor_version: string;
+  extracted_fields: Record<string, ExtractedFieldItem>;
+  ocr_confidence: number;
+  raw_text: string;
+  error_code?: string;
+  started_at: string;
+  completed_at: string;
+  created_at: string;
+}
+
+export interface VerificationDossierResponse {
+  instrument_id: string;
+  submitted_data: {
+    fdrNumber?: string;
+    bankName?: string;
+    branchName?: string;
+    ifscCode?: string;
+    principalAmount?: number;
+    issueDate?: string;
+    maturityDate?: string;
+    interestRate?: number;
+    institutionName?: string;
+  };
+  documents: Array<{
+    id: string;
+    instrument_id: string;
+    original_filename: string;
+    storage_key: string;
+    mime_type: string;
+    file_size_bytes: number;
+    sha256_checksum: string;
+    scan_status: string;
+    document_status: string;
+    uploaded_at: string;
+  }>;
+  latest_extraction_run?: DocumentExtractionRunItem | null;
+  discrepancies: Array<{
+    id: string;
+    category: string;
+    field_name: string;
+    expected_value?: string;
+    observed_value?: string;
+    severity: string;
+    resolution_status: string;
+    resolution_notes?: string;
+    created_at: string;
+  }>;
+  safeguard_notice: string;
+}
+
 export const verificationService = {
   checkDuplicate: (referenceNumber: string, excludeId?: string) =>
     apiClient.get<{
@@ -262,6 +326,35 @@ export const verificationService = {
     }>(`/verification/check-duplicate/${encodeURIComponent(referenceNumber)}`, {
       params: excludeId ? { exclude_id: excludeId } : undefined,
     }),
+
+  getDossier: (instrumentId: string) =>
+    apiClient.get<VerificationDossierResponse>(`/verification/dossier/${instrumentId}`),
+
+  extractDetails: (instrumentId: string) =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      instrument_id: string;
+      document: any;
+      extraction_run: DocumentExtractionRunItem;
+      discrepancies: any[];
+    }>(`/verification/extract/${instrumentId}`),
+
+  extractDocumentById: (documentId: string) =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      document: any;
+      extraction_run: DocumentExtractionRunItem;
+    }>(`/documents/${documentId}/extract`),
+
+  correctField: (payload: {
+    instrument_id: string;
+    field_name: string;
+    corrected_value: any;
+    correction_reason: string;
+    officer_user_id?: string;
+  }) => apiClient.post("/verification/correct-field", payload),
 
   submitTechnicalScrutiny: (payload: TechnicalScrutinyPayload) =>
     apiClient.post<{ status: string; message: string; instrument_id: string; verification_id: string }>(

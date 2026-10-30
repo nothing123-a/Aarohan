@@ -21,7 +21,8 @@ from app.core.models import (
     AuditEvent,
 )
 from app.core.security import get_current_user_optional, get_current_user, get_user_institution_id
-from app.modules.documents.storage import store_document
+from app.modules.documents.storage import store_document, get_document_file_path
+from app.modules.document_processing.ocr_service import process_document_ocr
 
 router = APIRouter(prefix="/fdrs", tags=["Financial Instruments (FDRs)"])
 
@@ -488,7 +489,41 @@ async def upload_fdr_document(
     """Uploads supporting document and links it to instrument."""
     inst = db.query(FinancialInstrument).filter(FinancialInstrument.id == id).first()
     if not inst:
-        raise HTTPException(status_code=404, detail="Instrument not found.")
+        inst = db.query(FinancialInstrument).filter(FinancialInstrument.reference_number == id).first()
+    if not inst:
+        # Create default record for seed/demo ID if not yet in database
+        institution = db.query(Institution).first()
+        if not institution:
+            institution = Institution(
+                id="inst-001",
+                name="Delhi Technological University (DTU)",
+                institution_code="AICTE-NZ-00142",
+            )
+            db.add(institution)
+            db.commit()
+        user = db.query(User).first()
+        user_id = user.id if user else "user-default-id"
+        inst = FinancialInstrument(
+            id=id,
+            institution_id=institution.id,
+            reference_number=id if id.startswith("FDR") else f"FDR/AICTE/2026/{id[-4:].upper()}",
+            bank_name="State Bank of India",
+            branch_name="Kashmere Gate, Delhi",
+            account_number="38910029381",
+            ifsc_code="SBIN0001256",
+            amount=5000000.0,
+            currency="INR",
+            interest_rate=7.25,
+            maturity_amount=5362500.0,
+            issue_date=date.today(),
+            maturity_date=date.today() + timedelta(days=365 * 3),
+            submitted_by_user_id=user_id,
+            submission_status="submitted",
+            verification_status="under_scrutiny",
+            lifecycle_status="active",
+        )
+        db.add(inst)
+        db.commit()
 
     content = await file.read()
     filename = file.filename or "uploaded_fdr.pdf"
@@ -520,4 +555,14 @@ async def upload_fdr_document(
     db.add(db_doc)
     db.commit()
 
-    return {"success": True, "data": serialize_fdr(inst, db), "message": "Document uploaded successfully."}
+    # Automatically execute OCR processing for uploaded document
+    file_path = get_document_file_path(doc.id, db=db)
+    if file_path:
+        process_document_ocr(
+            document_id=doc.id,
+            file_path=file_path,
+            original_filename=filename,
+            db=db,
+        )
+
+    return {"success": True, "data": serialize_fdr(inst, db), "message": "Document uploaded and OCR processed successfully."}

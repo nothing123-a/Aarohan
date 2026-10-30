@@ -14,6 +14,7 @@ import {
   ExternalLink,
   Sparkles,
   Edit3,
+  Eye,
 } from "lucide-react";
 import {
   Button,
@@ -404,10 +405,89 @@ export default function VerificationPage() {
     },
   ];
 
-  // View Mode: 'queue' (Authorized Scrutiny Queue) vs 'workspace' (Individual Case Scrutiny)
-  const [viewMode, setViewMode] = useState<"queue" | "workspace">("queue");
+  const isApprovingAuthority = user?.role === "approving_authority";
+
+  // View Mode: 'all_officers' (Executive All Officers OCR Ledger) vs 'queue' vs 'workspace'
+  const [viewMode, setViewMode] = useState<"queue" | "workspace" | "all_officers">(
+    isApprovingAuthority ? "all_officers" : "queue"
+  );
   const [queueSearch, setQueueSearch] = useState("");
   const [queueStatusFilter, setQueueStatusFilter] = useState("all");
+
+  // Filter state for All Scrutiny Officers OCR Telemetry
+  const [officerFilter, setOfficerFilter] = useState("all");
+  const [ocrStatusFilter, setOcrStatusFilter] = useState("all");
+  const [ocrSearchQuery, setOcrSearchQuery] = useState("");
+
+  // All Scrutiny Officers OCR Dataset
+  const allOfficerOcrRecords = useMemo(() => {
+    const officersList = [
+      { name: "Rajesh Kumar", role: "Senior Scrutiny Officer (Banking Cell)", badge: "bg-blue-100 text-blue-800" },
+      { name: "Neha Sharma", role: "Scrutiny Officer (Technical Audits)", badge: "bg-purple-100 text-purple-800" },
+      { name: "Amit Verma", role: "Verification Associate (CBS/SFMS)", badge: "bg-amber-100 text-amber-800" },
+      { name: "Priya Patel", role: "Scrutiny Officer (Legal & Lien)", badge: "bg-emerald-100 text-emerald-800" },
+    ];
+
+    return CENTRAL_FDR_RECORDS.map((r, idx) => {
+      const assignedOfficer = officersList[idx % officersList.length];
+      const docName =
+        r.documentsList?.[0]?.name ||
+        `${r.institutionCode || "AICTE"}_${r.fdrNumber.replace(/[\/\s]/g, "_")}_Official_Receipt.pdf`;
+      const engine = idx % 2 === 0 ? "PyMuPDF 2.0 & RapidOCR AI" : "Tesseract OCR v5.3 Layout Parser";
+      const ocrScore = r.ocrConfidence || (idx === 1 ? 89.2 : idx === 2 ? 48.2 : idx === 3 ? 0 : 98.4);
+      const concordanceType =
+        ocrScore >= 95
+          ? "CLEAN_MATCH"
+          : ocrScore >= 75
+          ? "SEEDED_DISCREPANCY"
+          : ocrScore > 0
+          ? "LOW_QUALITY_SCAN"
+          : "PROCESSING_FAILURE";
+
+      const concordanceLabel =
+        ocrScore >= 95
+          ? "Clean Match (100%)"
+          : ocrScore >= 75
+          ? "Discrepancy Detected (3 Mismatches)"
+          : ocrScore > 0
+          ? "Low Quality Scan (<60% OCR)"
+          : "Corrupted / Unreadable";
+
+      const matchingCaseIndex = idx % SCRUTINY_CASES.length;
+
+      return {
+        id: r.id,
+        fdrNumber: r.fdrNumber,
+        institutionName: r.institutionName,
+        institutionCode: r.institutionCode,
+        bankName: r.bankName,
+        principalAmount: r.principalAmount,
+        documentName: docName,
+        officer: assignedOfficer,
+        engine,
+        ocrScore,
+        concordanceType,
+        concordanceLabel,
+        scrutinyStatus: r.scrutinyStatus || "SCRUTINY_PASSED",
+        matchingCaseIndex,
+      };
+    });
+  }, [SCRUTINY_CASES]);
+
+  const filteredAllOfficerRecords = useMemo(() => {
+    return allOfficerOcrRecords.filter((rec) => {
+      const matchOfficer = officerFilter === "all" || rec.officer.name === officerFilter;
+      const matchConcordance = ocrStatusFilter === "all" || rec.concordanceType === ocrStatusFilter;
+      const matchSearch =
+        !ocrSearchQuery.trim() ||
+        rec.fdrNumber.toLowerCase().includes(ocrSearchQuery.toLowerCase()) ||
+        rec.institutionName.toLowerCase().includes(ocrSearchQuery.toLowerCase()) ||
+        rec.bankName.toLowerCase().includes(ocrSearchQuery.toLowerCase()) ||
+        rec.documentName.toLowerCase().includes(ocrSearchQuery.toLowerCase()) ||
+        rec.officer.name.toLowerCase().includes(ocrSearchQuery.toLowerCase());
+      return matchOfficer && matchConcordance && matchSearch;
+    });
+  }, [allOfficerOcrRecords, officerFilter, ocrStatusFilter, ocrSearchQuery]);
 
   // Active Scrutiny Case State
   const [activeCaseIndex, setActiveCaseIndex] = useState(1); // Default to Case 2 (deliberately seeded discrepancy)
@@ -623,35 +703,66 @@ export default function VerificationPage() {
   return (
     <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-12">
       <PageHeader
-        title="Technical Scrutiny & Verification Workspace"
-        description="Authorized scrutiny portal for AICTE Regulation Bureau. Review submitted FDRs, cross-match extracted OCR layers, register observations, and issue regulatory decisions."
+        title={isApprovingAuthority ? "OCR Documents Managing" : "Technical Scrutiny & Verification Workspace"}
+        description={
+          isApprovingAuthority
+            ? "Executive OCR documents supervision console. Oversee extracted OCR data, confidence scores, and physical deposit certificates verified by all scrutiny officers."
+            : "Authorized scrutiny portal for AICTE Regulation Bureau. Review submitted FDRs, cross-match extracted OCR layers, register observations, and issue regulatory decisions."
+        }
         breadcrumb={[
           { label: "Dashboard", href: "/dashboard" },
-          { label: "Technical Scrutiny" },
+          { label: isApprovingAuthority ? "OCR Documents Managing" : "Technical Scrutiny" },
         ]}
         actions={
           <div className="flex items-center gap-2">
             <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 mr-2 text-xs">
-              <button
-                onClick={() => setViewMode("queue")}
-                className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
-                  viewMode === "queue"
-                    ? "bg-white text-orange-600 shadow-2xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Scrutiny Queue (8)
-              </button>
-              <button
-                onClick={() => setViewMode("workspace")}
-                className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
-                  viewMode === "workspace"
-                    ? "bg-white text-orange-600 shadow-2xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Case Workspace
-              </button>
+              {isApprovingAuthority ? (
+                <>
+                  <button
+                    onClick={() => setViewMode("all_officers")}
+                    className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
+                      viewMode === "all_officers"
+                        ? "bg-white text-orange-600 shadow-2xs font-bold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    All Officers OCR Data ({allOfficerOcrRecords.length})
+                  </button>
+                  <button
+                    onClick={() => setViewMode("workspace")}
+                    className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
+                      viewMode === "workspace"
+                        ? "bg-white text-orange-600 shadow-2xs font-bold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Inspect OCR Dossier
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setViewMode("queue")}
+                    className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
+                      viewMode === "queue"
+                        ? "bg-white text-orange-600 shadow-2xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Scrutiny Queue (8)
+                  </button>
+                  <button
+                    onClick={() => setViewMode("workspace")}
+                    className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer ${
+                      viewMode === "workspace"
+                        ? "bg-white text-orange-600 shadow-2xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Case Workspace
+                  </button>
+                </>
+              )}
             </div>
 
             {viewMode === "workspace" && (
@@ -785,8 +896,177 @@ export default function VerificationPage() {
         </div>
       </div>
 
-      {/* ─── AUTHORIZED SCRUTINY QUEUE VIEW ─────────────────────────────── */}
-      {viewMode === "queue" ? (
+      {/* ─── ALL SCRUTINY OFFICERS OCR DOCUMENTS TABLE (APPROVING AUTHORITY) ─ */}
+      {viewMode === "all_officers" ? (
+        <Card className="space-y-4">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <FileCheck2 size={18} className="text-purple-600" />
+                <span>All Scrutiny Officers OCR Extraction & Document Ledger</span>
+              </CardTitle>
+              <CardDescription>
+                Consolidated oversight of physical FDR certificates, OCR confidence rates, and concordance determinations across all assigned scrutiny officers.
+              </CardDescription>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+              {/* Filter by Officer */}
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-slate-500 font-semibold">Officer:</span>
+                <select
+                  value={officerFilter}
+                  onChange={(e) => setOfficerFilter(e.target.value)}
+                  className="h-8 text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 text-slate-700 font-medium focus:outline-hidden"
+                >
+                  <option value="all">All Scrutiny Officers ({allOfficerOcrRecords.length})</option>
+                  <option value="Rajesh Kumar">Rajesh Kumar (Banking Cell)</option>
+                  <option value="Neha Sharma">Neha Sharma (Technical Audits)</option>
+                  <option value="Amit Verma">Amit Verma (CBS/SFMS)</option>
+                  <option value="Priya Patel">Priya Patel (Legal & Lien)</option>
+                </select>
+              </div>
+
+              {/* Filter by Status */}
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-slate-500 font-semibold">Status:</span>
+                <select
+                  value={ocrStatusFilter}
+                  onChange={(e) => setOcrStatusFilter(e.target.value)}
+                  className="h-8 text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 text-slate-700 font-medium focus:outline-hidden"
+                >
+                  <option value="all">All OCR Outcomes</option>
+                  <option value="CLEAN_MATCH">Clean Match (100%)</option>
+                  <option value="SEEDED_DISCREPANCY">Discrepancy Detected</option>
+                  <option value="LOW_QUALITY_SCAN">Low Quality (&lt;60%)</option>
+                  <option value="PROCESSING_FAILURE">Processing Failed</option>
+                </select>
+              </div>
+
+              <input
+                type="text"
+                placeholder="Search Document, College, Bank..."
+                value={ocrSearchQuery}
+                onChange={(e) => setOcrSearchQuery(e.target.value)}
+                className="h-8 px-3 text-xs bg-slate-50 border border-slate-200 rounded-lg w-full md:w-56 focus:outline-hidden focus:border-purple-500"
+              />
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 uppercase font-bold text-[10px] text-slate-600">
+                <tr>
+                  <th className="py-3 px-3">Certificate File</th>
+                  <th className="py-3 px-3">FDR & College</th>
+                  <th className="py-3 px-3">Bank</th>
+                  <th className="py-3 px-3">Assigned Scrutiny Officer</th>
+                  <th className="py-3 px-3">OCR Engine</th>
+                  <th className="py-3 px-3">OCR Accuracy</th>
+                  <th className="py-3 px-3">Concordance</th>
+                  <th className="py-3 px-3">Scrutiny Status</th>
+                  <th className="py-3 px-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredAllOfficerRecords.map((item) => (
+                  <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3 px-3">
+                      <div className="flex items-center gap-2">
+                        <FileText size={16} className="text-purple-600 flex-shrink-0" />
+                        <div>
+                          <p className="font-semibold text-slate-900 truncate max-w-[180px]" title={item.documentName}>
+                            {item.documentName}
+                          </p>
+                          <span className="text-[10px] text-slate-400 font-mono">PDF Scan · ClamAV Clean</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3">
+                      <p className="font-mono font-bold text-slate-900">{item.fdrNumber}</p>
+                      <p className="text-[11px] text-slate-600 truncate max-w-[160px]" title={item.institutionName}>
+                        {item.institutionName}
+                      </p>
+                    </td>
+                    <td className="py-3 px-3 text-slate-700 whitespace-nowrap">{item.bankName}</td>
+                    <td className="py-3 px-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="h-6 w-6 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                          {item.officer.name.split(" ").map((n) => n[0]).join("")}
+                        </span>
+                        <div>
+                          <p className="font-bold text-slate-800 text-xs">{item.officer.name}</p>
+                          <p className="text-[10px] text-slate-400">{item.officer.role}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 text-[11px] font-mono text-slate-600">{item.engine}</td>
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      <div className="space-y-1">
+                        <span
+                          className={`font-bold text-xs ${
+                            item.ocrScore >= 95
+                              ? "text-emerald-700"
+                              : item.ocrScore >= 75
+                              ? "text-amber-700"
+                              : item.ocrScore > 0
+                              ? "text-rose-700"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          {item.ocrScore}%
+                        </span>
+                        <div className="h-1.5 w-16 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${
+                              item.ocrScore >= 95 ? "bg-emerald-500" : item.ocrScore >= 75 ? "bg-amber-500" : "bg-rose-500"
+                            }`}
+                            style={{ width: `${item.ocrScore}%` }}
+                          />
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          item.concordanceType === "CLEAN_MATCH"
+                            ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                            : item.concordanceType === "SEEDED_DISCREPANCY"
+                            ? "bg-amber-50 text-amber-800 border-amber-200"
+                            : item.concordanceType === "LOW_QUALITY_SCAN"
+                            ? "bg-rose-50 text-rose-800 border-rose-200"
+                            : "bg-slate-100 text-slate-700 border-slate-300"
+                        }`}
+                      >
+                        {item.concordanceLabel}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-800 border border-slate-200">
+                        {item.scrutinyStatus}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-right whitespace-nowrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-purple-700 border-purple-200 hover:bg-purple-50"
+                        onClick={() => {
+                          setActiveCaseIndex(item.matchingCaseIndex);
+                          setViewMode("workspace");
+                        }}
+                      >
+                        <Eye size={13} />
+                        Inspect OCR Dossier
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      ) : viewMode === "queue" ? (
         <Card className="space-y-4">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
@@ -959,56 +1239,36 @@ export default function VerificationPage() {
         </Card>
       ) : (
         <>
-          {/* ─── ACCEPTANCE CRITERIA SCENARIO SWITCHER TABS ────────────────────── */}
-          <Card noPadding className="bg-slate-50 border-slate-200">
-            <div className="p-3.5 border-b border-slate-200/80 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
-                  Acceptance Testing Scrutiny Dossiers (PRD Demonstration Cases)
-                </span>
-                <p className="text-xs text-slate-700 font-semibold mt-0.5">
-                  Select a pre-seeded test case to review rule-based matching, seeded discrepancies, blur scan, or failure handling:
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" asChild className="h-7 text-xs bg-white">
-                  <Link to="/fdr">
-                    <ExternalLink size={12} />
-                    View in FDR Registry
-                  </Link>
-                </Button>
+          {/* Active Case Workspace Header */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-white rounded-xl border border-slate-200/80 shadow-xs">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setViewMode(isApprovingAuthority ? "all_officers" : "queue")}
+                className="h-8 text-xs text-slate-700 hover:text-slate-900 border-slate-300"
+              >
+                ← {isApprovingAuthority ? "Back to All Officers OCR Data" : "Back to Scrutiny Queue"}
+              </Button>
+              <div className="border-l border-slate-200 pl-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-bold text-sm text-slate-900">{currentCase.fdrRecord.fdrNumber}</span>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${currentCase.badgeColor}`}>
+                    {currentCase.badgeLabel}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">{currentCase.fdrRecord.institutionName} · {currentCase.fdrRecord.bankName}</p>
               </div>
             </div>
-
-            {/* Tab buttons */}
-            <div className="p-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-              {SCRUTINY_CASES.map((sc, idx) => {
-                const isSelected = activeCaseIndex === idx;
-                return (
-                  <button
-                    key={sc.id}
-                    onClick={() => setActiveCaseIndex(idx)}
-                    className={`p-3 rounded-lg text-left transition-all border ${
-                      isSelected
-                        ? "bg-white border-orange-500 shadow-sm ring-1 ring-orange-500/30"
-                        : "bg-white/60 hover:bg-white border-slate-200/80"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-mono font-bold text-slate-400">Case {idx + 1}</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${sc.badgeColor}`}>
-                        {sc.badgeLabel}
-                      </span>
-                    </div>
-                    <p className="text-xs font-bold text-slate-900 truncate">{sc.title}</p>
-                    <p className="text-[11px] text-slate-500 mt-0.5 font-mono">
-                      OCR: {sc.ocrConfidence}% · {sc.discrepancies.length} Discrepanc{sc.discrepancies.length === 1 ? "y" : "ies"}
-                    </p>
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" asChild className="h-8 text-xs bg-white">
+                <Link to={`/fdr/${currentCase.fdrId}`}>
+                  <ExternalLink size={12} className="mr-1" />
+                  View in FDR Registry
+                </Link>
+              </Button>
             </div>
-          </Card>
+          </div>
 
       {/* ─── HUMAN REVIEW WORKSPACE (Split layout: Document preview vs Side-by-side comparison) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
